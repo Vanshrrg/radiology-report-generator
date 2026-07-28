@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Raw dictation exports contain real patient names/HN/dates (PHI) — never publish these.
+# Cleaned, genericized content lives in src/data/premadeData.js instead.
+Template/

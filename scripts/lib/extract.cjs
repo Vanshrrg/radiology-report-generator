@@ -25,23 +25,37 @@ function normalizeTitle(title) {
     .toUpperCase();
 }
 
-const AGE_RE = /\b\d{1,3}[- ]?(year|y\/o|yo|yrs?)\b/i;
-const DATE_RE = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/;
-const HN_RE = /\bHN[:.]?\s*\d+/i;
+const AGE_RE = /\b\d{1,3}[- ]?(year|y\/o|yo|yrs?)[- ]old\b|\b\d{1,3}[- ](year|y\/o|yo|yrs?)\b/gi;
+const DATE_RE = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g;
+const HN_RE = /\bHN[:.]?\s*\d+/gi;
 const NAME_SIGNOFF_RE = /M\.?D\.?\s*$/;
 
 function looksLikeRealCase(text) {
   return AGE_RE.test(text) || DATE_RE.test(text) || HN_RE.test(text) || NAME_SIGNOFF_RE.test(text);
 }
 
+// Removes patient-identifying/case-specific fragments (ages, dates, HN numbers)
+// entirely rather than leaving placeholder text like "[date]" or "HN [redacted]"
+// behind, then tidies up the punctuation left over from the removal.
 function genericize(text) {
   return text
-    .replace(AGE_RE, '[age]-year-old')
-    .replace(DATE_RE, '[date]')
-    .replace(HN_RE, 'HN [redacted]')
+    .replace(AGE_RE, '')
+    .replace(DATE_RE, '')
+    .replace(HN_RE, '')
     .split('\n')
     .filter(line => !NAME_SIGNOFF_RE.test(line.trim()))
-    .join('\n');
+    .join('\n')
+    .replace(/\(\s*\)/g, '')
+    .replace(/,\s*,/g, ',')
+    .replace(/\(\s*,/g, '(')
+    .replace(/,\s*\)/g, ')')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*\./g, '.')
+    .replace(/^\s*,\s*/gm, '')
+    .replace(/\bon\s*\./g, '.')
+    .replace(/\bon\s*$/gm, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
 }
 
 const THAI_RE = /[฀-๿]/;

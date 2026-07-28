@@ -10,11 +10,40 @@ const TOP_LEVEL_LABELS = new Set([
   'LIMITATIONS', 'IMPRESSION', 'IMPRESSIONS',
 ]);
 
+// Matches compound/regional headers the source reports use instead of a bare
+// "FINDINGS:"/"IMPRESSION:" (e.g. "ABDOMEN FINDINGS:", "TL SPINE FINDING:",
+// "IMPESSIONS:" typo) so they switch buckets instead of leaking into whatever
+// section (often COMPARISON) happened to be active before them.
+function bucketFor(label) {
+  if (/FINDING/.test(label)) return 'findings';
+  if (/IMPRESSION|IMPESSION/.test(label)) return 'impression';
+  if (/^TECHNIQUE/.test(label)) return 'technique';
+  if (label === 'COMPARISON') return 'comparison';
+  if (label === 'LIMITATIONS') return 'limitations';
+  if (label === 'HISTORY') return 'skip';
+  return null;
+}
+
 function titleCase(str) {
   return str
     .toLowerCase()
     .replace(/\b\w/g, c => c.toUpperCase());
 }
+
+// Entries that survive extraction but aren't usable templates: section headers
+// scraped out of a report body, or duplicates misfiled into a catch-all region.
+// Keyed by source file, since the same title can be legitimate elsewhere
+// (e.g. "CT SCAN OF CHEST" is the real template in Chest.docx).
+const DROP_TITLES = {
+  'CTA.docx': new Set([
+    'CTA FINDINGS', // a header inside a CTA report, not a template of its own
+    'CT SCAN OF CHEST', // duplicates the real one in Chest.docx
+  ]),
+};
+
+// Templates below this much combined text are extraction leftovers (e.g. a lone
+// stray "Comparison:" line) rather than real fill-in templates.
+const MIN_TEMPLATE_CHARS = 120;
 
 function pickBestEntry(entries) {
   const clean = entries.filter(e => !looksLikeRealCase(e.body));
@@ -29,26 +58,34 @@ function parseSections(body) {
   const buckets = { technique: [], comparison: [], findings: [], impression: [], limitations: [] };
   let current = null;
 
-  const bucketFor = label => {
-    if (label === 'TECHNIQUE' || label === 'TECHNIQUES') return 'technique';
-    if (label === 'COMPARISON') return 'comparison';
-    if (label === 'FINDINGS') return 'findings';
-    if (label === 'LIMITATIONS') return 'limitations';
-    if (label === 'IMPRESSION' || label === 'IMPRESSIONS') return 'impression';
-    if (label === 'HISTORY') return 'skip';
-    return null;
-  };
-
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    const m = line.match(/^([A-Za-z][A-Za-z\/ ]{1,40}):\s*(.*)$/);
-    if (m) {
-      const label = m[1].trim().toUpperCase();
-      if (TOP_LEVEL_LABELS.has(label)) {
-        current = bucketFor(label);
-        if (current && current !== 'skip' && m[2]) buckets[current].push(m[2]);
+    const withColon = line.match(/^([A-Za-z][A-Za-z\/ ]{1,40}):\s*(.*)$/);
+    // Some source reports put the section label alone on its own line with no
+    // colon (e.g. "TECHNIQUE" then content starts on the next line).
+    const bareLabel = !withColon && TOP_LEVEL_LABELS.has(line.toUpperCase()) ? line.toUpperCase() : null;
+
+    if (withColon) {
+      const label = withColon[1].trim().toUpperCase();
+      const bucket = bucketFor(label);
+      if (bucket) {
+        current = bucket;
+        if (bucket !== 'skip' && withColon[2]) buckets[bucket].push(withColon[2]);
         continue;
       }
+      // An unrecognized ALL-CAPS header (e.g. "BRAIN:", "MRA AND VESSEL WALL:")
+      // immediately after COMPARISON marks the real start of findings — these
+      // reports skip a standalone "FINDINGS:" line and go straight into
+      // per-organ subheaders. Once in findings, keep treating unrecognized
+      // headers as content (they're legitimate subheaders within findings).
+      if (current === 'comparison' && label === label.toUpperCase()) {
+        current = 'findings';
+        buckets.findings.push(rawLine.trimEnd());
+        continue;
+      }
+    } else if (bareLabel) {
+      current = bucketFor(bareLabel);
+      continue;
     }
     if (current && current !== 'skip') {
       buckets[current].push(rawLine.trimEnd());
@@ -243,13 +280,86 @@ const CANONICAL_MAPS = {
     'ULTRASOUND OF THE KUB SYSTEM': 'Ultrasound of KUB',
     'EMERGENCY ULTRASOUND OF THE KUB SYSTEM': 'Ultrasound of KUB (Emergency)',
   },
+
+  'us.abdomen': {
+    'ULTRASOUND UPPER ABDOMEN': 'Ultrasound of Upper Abdomen',
+    'EMERGENCY ULTRASOUND OF THE UPPER ABDOMEN': 'Ultrasound of Upper Abdomen (Emergency)',
+    'EMERGENCY ULTRASOUND OF THE WHOLE ABDOMEN': 'Ultrasound of Whole Abdomen (Emergency)',
+  },
+
+  'us.neck': {
+    'ULTRASOUND OF THE NECK': 'Ultrasound of Neck',
+  },
+
+  'ct.kidney': {
+    'CT SCAN OF KIDNEY': 'CT of Kidney',
+  },
+
+  'ct.liver': {
+    'TRIPLE PHASE CT SCAN OF LIVER': 'CT of Liver (Triple Phase)',
+  },
+
+  'ct.angio_carotid_brain': {
+    'CTA BRAIN WITH CAROTID': 'CTA of Brain & Carotid',
+  },
+
+  'ct.angio_extremities': {
+    'EMERGENCY CTA LOWER EXTREMITIES': 'CTA of Lower Extremities (Emergency)',
+    'EMERGENCY CTA OF RIGHT UPPER EXTREMITY AND CT CHEST WITH CONTRAST.':
+      'CTA of Upper Extremity & CT Chest (Emergency)',
+  },
+
+  'ct.spine': {
+    'CT SCAN OF L-S SPINE': 'CT of L-S Spine',
+    'EMERGENCY CT BRAIN WITHOUT CONTRAST WITH C-SPINE.': 'CT of Brain & C-Spine (Emergency)',
+    'EMERGENCY CT BRAIN WITHOUT CONTRAST WITH C-SPINE WITH FACIAL BONE':
+      'CT of Brain, C-Spine & Facial Bone (Emergency)',
+  },
+
+  'mri.angio_aorta': {
+    'MRA WHOLE AORTA': 'MRA of Whole Aorta',
+  },
 };
 
+// Typos carried over verbatim from the source dictations.
+const PHRASE_TYPO_FIXES = [
+  [/\bils not dilated\b/gi, 'is not dilated'],
+  [/\bare patented\b/gi, 'are patent'],
+  [/\bhas intact\b/gi, 'is intact'],
+  [/\bascotes\b/gi, 'ascites'],
+];
+
+// A phrase is only worth offering as a reusable snippet if it states a normal
+// or negative finding. Anything carrying patient-specific detail (measurements,
+// comparisons to priors, post-op history) belongs to one report, not the library.
+const CASE_SPECIFIC = /\b(still|unchanged|prior|increased|decreased|s\/p|residual|suggestive|suggest|recommend|correlate|measur|seen at|evidence of)\b/i;
+const HAS_MEASUREMENT = /\d+(\.\d+)?\s*(x\s*\d|cm|mm|ml\b)|\bIM\s*\d|\bSE\s*\d/i;
+const NORMAL_FINDING = /\b(no|not|normal|unremarkable|patent|intact|clear|negative|well[- ]|without)\b/i;
+// Fill-in-the-blank stubs ("Renal length = cm", "The isthmus is ...") and
+// fragments left behind by sentence splitting ("mm in thickness.").
+const IS_STUB = /\.\.\.|=|^\s*[a-z]|^(mm|cm)\b/;
+
 function extractPhrases(findingsText) {
+  const seen = new Set();
   return findingsText
     .split(/\n|(?<=\.)\s+/)
-    .map(s => s.replace(/^[-•\s]+/, '').trim())
-    .filter(s => s.length > 12 && s.length < 100 && /[.]$/.test(s) && !/=/.test(s));
+    .map(s => {
+      let out = s.replace(/^[-•#\s]+/, '').trim();
+      for (const [re, to] of PHRASE_TYPO_FIXES) out = out.replace(re, to);
+      return out;
+    })
+    .filter(s => {
+      if (s.length < 18 || s.length > 110) return false;
+      if (!s.endsWith('.')) return false;
+      if (IS_STUB.test(s)) return false;
+      if (HAS_MEASUREMENT.test(s)) return false;
+      if (CASE_SPECIFIC.test(s)) return false;
+      if (!NORMAL_FINDING.test(s)) return false;
+      const key = s.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 async function main() {
@@ -261,20 +371,26 @@ async function main() {
   for (const file of Object.keys(groups)) {
     const mapper = FILE_MAPPERS[file];
     for (const normalizedTitle of Object.keys(groups[file])) {
+      if (DROP_TITLES[file]?.has(normalizedTitle)) continue;
+
       const entries = groups[file][normalizedTitle];
       const bestBody = pickBestEntry(entries);
       const { technique, findings, impression } = parseSections(bestBody);
-      const { modality, region } = mapper(normalizedTitle);
 
+      const candidate = { technique, findings, impression };
+      const candidateLen = technique.length + findings.length + impression.length;
+      if (candidateLen < MIN_TEMPLATE_CHARS) continue;
+
+      const { modality, region } = mapper(normalizedTitle);
       const canonicalMap = CANONICAL_MAPS[`${modality}.${region}`];
       const name = (canonicalMap && canonicalMap[normalizedTitle]) || titleCase(normalizedTitle);
 
       templates[modality] = templates[modality] || {};
       templates[modality][region] = templates[modality][region] || {};
       const existing = templates[modality][region][name];
-      const candidate = { technique, findings, impression };
-      const candidateLen = technique.length + findings.length + impression.length;
-      const existingLen = existing ? existing.technique.length + existing.findings.length + existing.impression.length : -1;
+      const existingLen = existing
+        ? existing.technique.length + existing.findings.length + existing.impression.length
+        : -1;
       if (candidateLen > existingLen) {
         templates[modality][region][name] = candidate;
       }
@@ -284,6 +400,13 @@ async function main() {
       for (const p of extractPhrases(findings)) {
         if (phraseSets[key].size < 8) phraseSets[key].add(p);
       }
+    }
+  }
+
+  // Drop regions/modalities left empty once artifacts were filtered out.
+  for (const m of Object.keys(templates)) {
+    for (const r of Object.keys(templates[m])) {
+      if (Object.keys(templates[m][r]).length === 0) delete templates[m][r];
     }
   }
 

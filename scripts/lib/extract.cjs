@@ -29,6 +29,29 @@ const AGE_RE = /\b\d{1,3}[- ]?(year|y\/o|yo|yrs?)[- ]old\b|\b\d{1,3}[- ](year|y\
 const DATE_RE = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g;
 const HN_RE = /\bHN[:.]?\s*\d+/gi;
 const NAME_SIGNOFF_RE = /M\.?D\.?\s*$/;
+// A standalone line that's a radiologist sign-off rather than a finding: either
+// "Name M.D." or two-plus co-signing names chained with "/" and/or "," in any
+// mix ("Waratchaya/ Siri-on, M.D.", "Natchalita,Waratchaya,/Piyapron,M.D."),
+// with no other sentence punctuation. Findings/impressions always end in a
+// period or have a colon-labeled subheader, so this doesn't collide with them.
+const SIGNOFF_NAME = '[A-Z][a-zA-Z-]+';
+const SIGNOFF_SEP = '[\\s,/]+';
+const SIGNOFF_LINE_RE = new RegExp(
+  `^(${SIGNOFF_NAME}(${SIGNOFF_SEP}${SIGNOFF_NAME})+\\s*,?\\s*(M\\.?D\\.?)?` +
+    `|${SIGNOFF_NAME}\\s*,?\\s*M\\.?D\\.?)\\.?$`,
+);
+// Belt-and-suspenders: this specific radiologist's name gets dropped outright
+// even if a line's punctuation doesn't match the general pattern above.
+const KNOWN_SIGNOFF_NAME_RE = /waratchaya/i;
+// A different sign-off style used elsewhere in the source: role-labeled
+// co-signers, e.g. "Reporting: Aphittha, Thamonporn, M.D.".
+const ROLE_SIGNOFF_LINE_RE = /^(reporting|learning|attending|reported by|read by)\s*:\s*.+M\.?D\.?\.?\s*$/i;
+// Bare divider lines ("—----------") left over from a signature block.
+const DIVIDER_LINE_RE = /^[-—_]{3,}$/;
+// A patient-name stamp line, e.g. "Mr. HTET SHAR OO MYANMAR" — a title
+// followed by two or more ALL-CAPS words. Findings/impressions are written in
+// normal sentence case, so this shape doesn't occur in genuine content.
+const PATIENT_NAME_LINE_RE = /^(Mr|Mrs|Ms|Miss|Master)\.?\s+[A-Z]+(\s+[A-Z]+)+\s*$/;
 
 function looksLikeRealCase(text) {
   return AGE_RE.test(text) || DATE_RE.test(text) || HN_RE.test(text) || NAME_SIGNOFF_RE.test(text);
@@ -42,9 +65,6 @@ function genericize(text) {
     .replace(AGE_RE, '')
     .replace(DATE_RE, '')
     .replace(HN_RE, '')
-    .split('\n')
-    .filter(line => !NAME_SIGNOFF_RE.test(line.trim()))
-    .join('\n')
     .replace(/\(\s*\)/g, '')
     .replace(/,\s*,/g, ',')
     .replace(/\(\s*,/g, '(')
@@ -61,13 +81,23 @@ function genericize(text) {
 const THAI_RE = /[฀-๿]/;
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu;
 
-// Strips Thai-script lines (stray clinician annotations / patient names left in
-// the dictation exports) and emoji artifacts. Applied to every entry, not just
-// ones flagged as real cases, since these can appear in otherwise-blank templates.
+// Strips Thai-script lines, emoji artifacts, and radiologist sign-off lines
+// (e.g. "Waratchaya M.D.", "Waratchaya/ Siriwan"). Applied to every entry
+// unconditionally — not just ones flagged as a real case — since sign-off
+// lines appear mid-document in otherwise-blank templates too.
 function stripNoise(text) {
   return text
     .split('\n')
-    .filter(line => !THAI_RE.test(line))
+    .filter(line => {
+      const trimmed = line.trim();
+      if (THAI_RE.test(trimmed)) return false;
+      if (SIGNOFF_LINE_RE.test(trimmed)) return false;
+      if (KNOWN_SIGNOFF_NAME_RE.test(trimmed)) return false;
+      if (ROLE_SIGNOFF_LINE_RE.test(trimmed)) return false;
+      if (DIVIDER_LINE_RE.test(trimmed)) return false;
+      if (PATIENT_NAME_LINE_RE.test(trimmed)) return false;
+      return true;
+    })
     .join('\n')
     .replace(EMOJI_RE, '')
     .replace(/[ \t]{2,}/g, ' ')

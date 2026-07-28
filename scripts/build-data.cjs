@@ -16,11 +16,15 @@ const TOP_LEVEL_LABELS = new Set([
 // section (often COMPARISON) happened to be active before them.
 function bucketFor(label) {
   if (/FINDING/.test(label)) return 'findings';
-  if (/IMPRESSION|IMPESSION/.test(label)) return 'impression';
+  if (/IMPRESSION|IMPESSION/.test(label) || label === 'IMP') return 'impression';
   if (/^TECHNIQUE/.test(label)) return 'technique';
   if (label === 'COMPARISON') return 'comparison';
   if (label === 'LIMITATIONS') return 'limitations';
-  if (label === 'HISTORY') return 'skip';
+  // History is almost always blank/patient-specific in the source templates,
+  // so it isn't worth carrying template content for — but it still needs to
+  // be a bucket (not skipped) so any stray text after it doesn't leak into
+  // whatever section came before.
+  if (label === 'HISTORY') return 'history';
   return null;
 }
 
@@ -55,7 +59,7 @@ function pickBestEntry(entries) {
 
 function parseSections(body) {
   const lines = body.split('\n');
-  const buckets = { technique: [], comparison: [], findings: [], impression: [], limitations: [] };
+  const buckets = { history: [], technique: [], comparison: [], findings: [], impression: [], limitations: [] };
   let current = null;
 
   for (const rawLine of lines) {
@@ -94,13 +98,19 @@ function parseSections(body) {
 
   const clean = arr => arr.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 
-  const technique = [clean(buckets.technique), clean(buckets.comparison) ? `Comparison: ${clean(buckets.comparison)}` : '']
-    .filter(Boolean).join('\n');
+  // History sections in the source are real per-patient clinical narratives
+  // ("A male with a history of..."), not reusable template text — unlike
+  // Technique/Findings they don't generalize, so they're parsed only to keep
+  // section boundaries correct and then dropped rather than shipped as
+  // template content. The field starts blank for the user to fill in.
+  const history = '';
+  const technique = clean(buckets.technique);
+  const comparison = clean(buckets.comparison);
   const findings = [clean(buckets.limitations) ? `Limitations: ${clean(buckets.limitations)}` : '', clean(buckets.findings)]
     .filter(Boolean).join('\n');
   const impression = clean(buckets.impression);
 
-  return { technique, findings, impression };
+  return { history, technique, comparison, findings, impression };
 }
 
 function mapAbdo(title) {
@@ -332,9 +342,12 @@ const PHRASE_TYPO_FIXES = [
 // A phrase is only worth offering as a reusable snippet if it states a normal
 // or negative finding. Anything carrying patient-specific detail (measurements,
 // comparisons to priors, post-op history) belongs to one report, not the library.
-const CASE_SPECIFIC = /\b(still|unchanged|prior|increased|decreased|s\/p|residual|suggestive|suggest|recommend|correlate|measur|seen at|evidence of)\b/i;
+const CASE_SPECIFIC =
+  /\b(still|unchanged|prior|increased|decreased|s\/p|residual|suggestive|suggest|recommend|correlate|measur|seen at|evidence of|could be|possibly|probable|likely|ddx|differential|favor)\b/i;
 const HAS_MEASUREMENT = /\d+(\.\d+)?\s*(x\s*\d|cm|mm|ml\b)|\bIM\s*\d|\bSE\s*\d/i;
-const NORMAL_FINDING = /\b(no|not|normal|unremarkable|patent|intact|clear|negative|well[- ]|without)\b/i;
+// "well-defined"/"well-circumscribed" describe abnormal lesions just as often
+// as normal ones, so they're deliberately not treated as a normal-finding signal.
+const NORMAL_FINDING = /\b(no|not|normal|unremarkable|patent|intact|clear|negative|without)\b/i;
 // Fill-in-the-blank stubs ("Renal length = cm", "The isthmus is ...") and
 // fragments left behind by sentence splitting ("mm in thickness.").
 const IS_STUB = /\.\.\.|=|^\s*[a-z]|^(mm|cm)\b/;
@@ -365,7 +378,7 @@ function extractPhrases(findingsText) {
 async function main() {
   const groups = await extractAll(TEMPLATE_DIR);
 
-  const templates = {}; // modality -> region -> name -> {technique,findings,impression}
+  const templates = {}; // modality -> region -> name -> {history,technique,comparison,findings,impression}
   const phraseSets = {}; // "modality.region" -> Set
 
   for (const file of Object.keys(groups)) {
@@ -375,10 +388,10 @@ async function main() {
 
       const entries = groups[file][normalizedTitle];
       const bestBody = pickBestEntry(entries);
-      const { technique, findings, impression } = parseSections(bestBody);
+      const { history, technique, comparison, findings, impression } = parseSections(bestBody);
 
-      const candidate = { technique, findings, impression };
-      const candidateLen = technique.length + findings.length + impression.length;
+      const candidate = { history, technique, comparison, findings, impression };
+      const candidateLen = technique.length + comparison.length + findings.length + impression.length;
       if (candidateLen < MIN_TEMPLATE_CHARS) continue;
 
       const { modality, region } = mapper(normalizedTitle);
@@ -389,7 +402,7 @@ async function main() {
       templates[modality][region] = templates[modality][region] || {};
       const existing = templates[modality][region][name];
       const existingLen = existing
-        ? existing.technique.length + existing.findings.length + existing.impression.length
+        ? existing.technique.length + existing.comparison.length + existing.findings.length + existing.impression.length
         : -1;
       if (candidateLen > existingLen) {
         templates[modality][region][name] = candidate;
@@ -397,9 +410,8 @@ async function main() {
 
       const key = `${modality}.${region}`;
       phraseSets[key] = phraseSets[key] || new Set();
-      for (const p of extractPhrases(findings)) {
-        if (phraseSets[key].size < 8) phraseSets[key].add(p);
-      }
+      for (const p of extractPhrases(findings)) phraseSets[key].add(p);
+      for (const p of extractPhrases(impression)) phraseSets[key].add(p);
     }
   }
 
@@ -439,7 +451,11 @@ export const phrases = ${JSON.stringify(phrases, null, 2)};
   }
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { parseSections };

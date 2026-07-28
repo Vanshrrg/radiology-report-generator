@@ -1,10 +1,10 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef, useState } from 'react';
-import { formatReport, exportReportDocx } from '../utils/reportUtils.js';
+import { formatReport, exportReportDocx, REPORT_SIGNATURE } from '../utils/reportUtils.js';
 
 const MIN_HEIGHT = 44; // px, roughly one line + padding
 // Technique is usually short; findings/impression can legitimately run long,
 // so give them more room to grow before they start scrolling internally.
-const MAX_HEIGHT = { technique: 220, findings: 480, impression: 480 };
+const MAX_HEIGHT = { history: 160, technique: 220, comparison: 120, findings: 480, impression: 480 };
 
 function autoResize(el, field) {
   if (!el) return;
@@ -28,13 +28,21 @@ const ReportEditor = forwardRef(function ReportEditor(
 ) {
   const [activeField, setActiveField] = useState('findings');
   const [copied, setCopied] = useState(false);
-  const textareaRefs = { technique: useRef(null), findings: useRef(null), impression: useRef(null) };
+  const textareaRefs = {
+    history: useRef(null),
+    technique: useRef(null),
+    comparison: useRef(null),
+    findings: useRef(null),
+    impression: useRef(null),
+  };
 
   useEffect(() => {
+    autoResize(textareaRefs.history.current, 'history');
     autoResize(textareaRefs.technique.current, 'technique');
+    autoResize(textareaRefs.comparison.current, 'comparison');
     autoResize(textareaRefs.findings.current, 'findings');
     autoResize(textareaRefs.impression.current, 'impression');
-  }, [fields.technique, fields.findings, fields.impression]);
+  }, [fields.history, fields.technique, fields.comparison, fields.findings, fields.impression]);
 
   useImperativeHandle(ref, () => ({
     insertAtCursor(text) {
@@ -61,8 +69,9 @@ const ReportEditor = forwardRef(function ReportEditor(
     const report = formatReport({
       patientName: patientInfo.name,
       patientDate: patientInfo.date,
-      studyType: patientInfo.studyType,
+      history: fields.history,
       technique: fields.technique,
+      comparison: fields.comparison,
       findings: fields.findings,
       impression: fields.impression,
     });
@@ -73,17 +82,23 @@ const ReportEditor = forwardRef(function ReportEditor(
 
   const handleExportDocx = () => {
     exportReportDocx({
+      // Study type isn't printed in the document — it's only used to name the
+      // downloaded file.
+      studyType: patientInfo.studyType,
       patientName: patientInfo.name,
       patientDate: patientInfo.date,
-      studyType: patientInfo.studyType,
+      history: fields.history,
       technique: fields.technique,
+      comparison: fields.comparison,
       findings: fields.findings,
       impression: fields.impression,
     });
   };
 
   const fieldConfig = [
+    { key: 'history', label: 'History' },
     { key: 'technique', label: 'Technique' },
+    { key: 'comparison', label: 'Comparison' },
     { key: 'findings', label: 'Findings' },
     { key: 'impression', label: 'Impression' },
   ];
@@ -125,9 +140,20 @@ const ReportEditor = forwardRef(function ReportEditor(
               setFields(f => ({ ...f, [key]: e.target.value }));
               autoResize(e.target, key);
             }}
+            spellCheck="true"
+            lang="en"
           />
         </div>
       ))}
+
+      {/* Fixed sign-off appended to every report — shown so it's clear it's
+          included, but it isn't an editable field. */}
+      <div className="flex flex-col shrink-0">
+        <span className="text-sm font-semibold text-slate-700 mb-1">Signature</span>
+        <div className="px-2 py-1.5 text-sm text-slate-500 italic bg-slate-50 border border-dashed border-slate-200 rounded">
+          {REPORT_SIGNATURE}
+        </div>
+      </div>
 
       </div>
 

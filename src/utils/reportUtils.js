@@ -1,24 +1,35 @@
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 
+// Fixed reporting signature appended to every report. Not exposed as an
+// editable field on purpose — it isn't part of the report content the user
+// edits, it's the sign-off every report carries regardless.
+export const REPORT_SIGNATURE = 'Waratchaya M.D.';
+
 // Collapses blank lines within a field's own text so lines that belong
 // together (e.g. a bulleted findings list) aren't spaced apart from each other.
 function tighten(text) {
   return (text || '').split('\n').filter(line => line.trim() !== '').join('\n');
 }
 
-export function formatReport({ patientName, patientDate, studyType, technique, findings, impression }) {
-  return `RADIOLOGY REPORT
-Patient: ${patientName || ''}          Date: ${patientDate || ''}
-Study: ${studyType || ''}
+export function formatReport({ patientName, patientDate, history, technique, comparison, findings, impression }) {
+  return `Patient: ${patientName || ''}          Date: ${patientDate || ''}
+
+HISTORY
+${tighten(history)}
 
 TECHNIQUE
 ${tighten(technique)}
+
+COMPARISON
+${tighten(comparison)}
 
 FINDINGS
 ${tighten(findings)}
 
 IMPRESSION
-${tighten(impression)}`;
+${tighten(impression)}
+
+${REPORT_SIGNATURE}`;
 }
 
 // Matches the source dictation templates' own layout: a plain "LABEL: content"
@@ -38,24 +49,40 @@ function sectionParagraphs(label, body) {
   return paragraphs;
 }
 
-export async function exportReportDocx({ patientName, patientDate, studyType, technique, findings, impression }) {
+// studyType is only used to name the downloaded file — it isn't printed in
+// the document itself.
+export async function exportReportDocx({
+  studyType,
+  patientName,
+  patientDate,
+  history,
+  technique,
+  comparison,
+  findings,
+  impression,
+}) {
   const doc = new Document({
     sections: [
       {
         children: [
-          new Paragraph({ children: [new TextRun({ text: (studyType || '').toUpperCase() })] }),
           new Paragraph({
-            children: [new TextRun({ text: 'HISTORY: ', bold: true }), new TextRun(patientName || '')],
-          }),
-          new Paragraph({
-            children: [new TextRun({ text: 'DATE: ', bold: true }), new TextRun(patientDate || '')],
+            children: [
+              new TextRun({ text: `Patient: ${patientName || ''}` }),
+              new TextRun({ text: `          Date: ${patientDate || ''}` }),
+            ],
           }),
           new Paragraph({ children: [] }),
+          ...sectionParagraphs('HISTORY', history),
+          new Paragraph({ children: [] }),
           ...sectionParagraphs('TECHNIQUE', technique),
+          new Paragraph({ children: [] }),
+          ...sectionParagraphs('COMPARISON', comparison),
           new Paragraph({ children: [] }),
           ...sectionParagraphs('FINDINGS', findings),
           new Paragraph({ children: [] }),
           ...sectionParagraphs('IMPRESSION', impression),
+          new Paragraph({ children: [] }),
+          new Paragraph({ children: [new TextRun(REPORT_SIGNATURE)] }),
         ],
       },
     ],

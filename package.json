@@ -10,7 +10,7 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
     "extract:templates": "node scripts/extract-templates.cjs",
-    "build:data": "node scripts/build-data.cjs"
+    "build:data": "node scripts/build-data.cjs && node scripts/build-abdomen-diseases.cjs"
   },
   "keywords": [],
   "author": "",

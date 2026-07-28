@@ -6,7 +6,7 @@ import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
 import { exportUserData, importUserData } from './utils/reportUtils.js';
 
-const EMPTY_FIELDS = { technique: '', findings: '', impression: '' };
+const EMPTY_FIELDS = { history: '', technique: '', comparison: 'None.', findings: '', impression: '' };
 
 export default function App() {
   const [userTemplates, setUserTemplates] = useLocalStorage('radiology.userTemplates', {});
@@ -25,7 +25,13 @@ export default function App() {
   const handleSelectTemplate = (modality, region, name, data) => {
     setSelected({ modality, region, name });
     setOpenScope({ modality, region });
-    setFields({ technique: data.technique || '', findings: data.findings || '', impression: data.impression || '' });
+    setFields({
+      history: data.history || '',
+      technique: data.technique || '',
+      comparison: data.comparison || 'None.',
+      findings: data.findings || '',
+      impression: data.impression || '',
+    });
     setPatientInfo(p => ({ ...p, studyType: name }));
   };
 

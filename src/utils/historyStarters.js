@@ -4,10 +4,10 @@
 // and over, not any single patient's real history. Counts are from that scan.
 export const HISTORY_STARTERS = [
   { group: 'Age & sex', items: [
-    { label: '__-year-old male', text: 'A __-year-old male ' },
-    { label: '__-year-old female', text: 'A __-year-old female ' },
-    { label: '__-year-old boy', text: 'A __-year-old boy ' },
-    { label: '__-year-old girl', text: 'A __-year-old girl ' },
+    { label: '-year-old male', text: 'A -year-old male ' },
+    { label: '-year-old female', text: 'A -year-old female ' },
+    { label: '-year-old boy', text: 'A -year-old boy ' },
+    { label: '-year-old girl', text: 'A -year-old girl ' },
   ]},
   { group: 'Connectors', items: [
     { label: 'known case of', text: 'known case of ' },

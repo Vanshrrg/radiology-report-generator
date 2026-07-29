@@ -38,7 +38,7 @@ export default function RightPanel({
   const filteredPhrases = q ? scopedPhrases.filter(p => p.searchText.includes(q)) : scopedPhrases;
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 border-l border-slate-200">
+    <div className="h-full min-h-0 flex flex-col bg-slate-50 border-l border-slate-200">
       <div className="p-3 border-b border-slate-200">
         <h2 className="text-sm font-semibold text-slate-700 mb-2">Phrases</h2>
         <input

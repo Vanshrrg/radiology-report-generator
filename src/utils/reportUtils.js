@@ -11,8 +11,9 @@ function tighten(text) {
   return (text || '').split('\n').filter(line => line.trim() !== '').join('\n');
 }
 
-export function formatReport({ patientName, patientDate, history, technique, comparison, findings, impression }) {
-  return `Patient: ${patientName || ''}          Date: ${patientDate || ''}
+export function formatReport({ studyType, patientName, history, technique, comparison, findings, impression }) {
+  return `${studyType || ''}
+Patient: ${patientName || ''}
 
 HISTORY
 ${tighten(history)}
@@ -49,12 +50,9 @@ function sectionParagraphs(label, body) {
   return paragraphs;
 }
 
-// studyType is only used to name the downloaded file — it isn't printed in
-// the document itself.
 export async function exportReportDocx({
   studyType,
   patientName,
-  patientDate,
   history,
   technique,
   comparison,
@@ -65,12 +63,8 @@ export async function exportReportDocx({
     sections: [
       {
         children: [
-          new Paragraph({
-            children: [
-              new TextRun({ text: `Patient: ${patientName || ''}` }),
-              new TextRun({ text: `          Date: ${patientDate || ''}` }),
-            ],
-          }),
+          new Paragraph({ children: [new TextRun({ text: studyType || '', bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: `Patient: ${patientName || ''}` })] }),
           new Paragraph({ children: [] }),
           ...sectionParagraphs('HISTORY', history),
           new Paragraph({ children: [] }),

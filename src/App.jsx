@@ -12,7 +12,7 @@ export default function App() {
   const [userTemplates, setUserTemplates] = useLocalStorage('radiology.userTemplates', {});
   const [userPhrases, setUserPhrases] = useLocalStorage('radiology.userPhrases', {});
 
-  const [patientInfo, setPatientInfo] = useState({ name: '', date: '', studyType: '' });
+  const [patientInfo, setPatientInfo] = useState({ name: '', studyType: '' });
   const [fields, setFields] = useState(EMPTY_FIELDS);
   const [selected, setSelected] = useState(null);
   // Which modality/region is expanded in the left menu — the phrase list is
@@ -32,19 +32,14 @@ export default function App() {
       findings: data.findings || '',
       impression: data.impression || '',
     });
-    setPatientInfo(p => ({ ...p, studyType: name }));
+    // Study type is the exam performed (e.g. "CT Whole Abdomen"), not the
+    // template's name — templates filed under a disease name (e.g. "Hepatocellular
+    // Carcinoma") still carry their own real study type separately.
+    setPatientInfo(p => ({ ...p, studyType: data.studyType || name }));
   };
 
   const handleInsertPhrase = phrase => {
     editorRef.current?.insertAtCursor(phrase);
-  };
-
-  // Clears the report being written; leaves the left menu where it is so you
-  // can start a fresh report in the same region.
-  const handleClear = () => {
-    setFields(EMPTY_FIELDS);
-    setPatientInfo({ name: '', date: '', studyType: '' });
-    setSelected(null);
   };
 
   const saveTemplateTo = (modality, region, name) => {
@@ -54,36 +49,18 @@ export default function App() {
         ...(prev[modality] || {}),
         [region]: {
           ...((prev[modality] || {})[region] || {}),
-          [name]: { ...fields },
+          [name]: { ...fields, studyType: patientInfo.studyType },
         },
       },
     }));
     setSelected({ modality, region, name });
     setOpenScope({ modality, region });
-    setPatientInfo(p => ({ ...p, studyType: name }));
   };
 
-  // The Study type field doubles as the template's name. If it's been edited
-  // since the template was loaded, saving renames it everywhere (left menu,
-  // right panel) instead of leaving a stale duplicate under the old name.
-  const renameIfNeeded = (modality, region, newName) => {
-    if (
-      selected &&
-      selected.modality === modality &&
-      selected.region === region &&
-      selected.name !== newName &&
-      userTemplates[modality]?.[region]?.[selected.name]
-    ) {
-      setUserTemplates(prev => {
-        const next = structuredClone(prev);
-        delete next[modality][region][selected.name];
-        return next;
-      });
-    }
-  };
-
-  // Save: updates the currently loaded template in place when possible,
-  // renaming it if the Study type field has been changed.
+  // Save: updates the currently loaded template in place. The template's name
+  // comes from what's loaded (or a prompt if nothing is), not from Study type —
+  // Study type is the exam performed, not the template's identity. Use the ✏️
+  // icon in the left menu to rename a template.
   const handleSaveTemplate = () => {
     const modality = selected?.modality || openScope?.modality;
     const region = selected?.region || openScope?.region;
@@ -91,13 +68,9 @@ export default function App() {
       window.alert('Open a modality & region on the left (or load a template) before saving.');
       return;
     }
-    const name = patientInfo.studyType.trim();
-    if (!name) {
-      window.alert('Enter a name in the Study type field before saving.');
-      return;
-    }
-    renameIfNeeded(modality, region, name);
-    saveTemplateTo(modality, region, name);
+    const name = selected?.name || window.prompt('Template name:');
+    if (!name?.trim()) return;
+    saveTemplateTo(modality, region, name.trim());
   };
 
   // Save As: saves a copy under a new name in the same region, leaving the
@@ -109,7 +82,7 @@ export default function App() {
       window.alert('Open a modality & region on the left before saving.');
       return;
     }
-    const name = window.prompt('Save as new template named:', patientInfo.studyType.trim());
+    const name = window.prompt('Save as new template named:', selected?.name || '');
     if (!name?.trim()) return;
     saveTemplateTo(modality, region, name.trim());
   };
@@ -169,7 +142,6 @@ export default function App() {
     });
     if (selected && selected.modality === modality && selected.region === region && selected.name === oldName) {
       setSelected({ modality, region, name: newName });
-      setPatientInfo(p => ({ ...p, studyType: newName }));
     }
   };
 
@@ -212,7 +184,11 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex-1 grid grid-cols-[260px_1fr_300px] min-h-0">
+      {/* grid-rows-[minmax(0,1fr)] forces the single row to the container's
+          actual height instead of auto-sizing to content — required so each
+          panel's own h-full/overflow-y-auto can scroll independently now that
+          the editor's fields stretch instead of capping their own height. */}
+      <div className="flex-1 grid grid-cols-[260px_1fr_300px] grid-rows-[minmax(0,1fr)] min-h-0">
         <LeftPanel
           templates={mergeTemplateTrees(premadeTemplates, userTemplates)}
           userTemplates={userTemplates}
@@ -232,7 +208,6 @@ export default function App() {
           onSaveTemplate={handleSaveTemplate}
           onSaveTemplateAs={handleSaveTemplateAs}
           onDeleteCurrentTemplate={handleDeleteCurrentTemplate}
-          onClear={handleClear}
         />
         <RightPanel
           premadePhrases={premadePhrases}

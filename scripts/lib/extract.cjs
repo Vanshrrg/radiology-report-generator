@@ -45,7 +45,9 @@ const SIGNOFF_LINE_RE = new RegExp(
 const KNOWN_SIGNOFF_NAME_RE = /waratchaya/i;
 // A different sign-off style used elsewhere in the source: role-labeled
 // co-signers, e.g. "Reporting: Aphittha, Thamonporn, M.D.".
-const ROLE_SIGNOFF_LINE_RE = /^(reporting|learning|attending|reported by|read by)\s*:\s*.+M\.?D\.?\.?\s*$/i;
+// Doesn't require an "M.D." suffix — role-labeled co-signer lists appear as
+// bare names too, e.g. "Learning: Pongsatorn, Suphaporn, Kanchanita, Thanart".
+const ROLE_SIGNOFF_LINE_RE = /^(reporting|learning|attending|reported by|read by)\s*:\s*[A-Z][a-zA-Z.,\s]*$/i;
 // Bare divider lines ("—----------") left over from a signature block.
 const DIVIDER_LINE_RE = /^[-—_]{3,}$/;
 // A patient-name stamp line, e.g. "Mr. HTET SHAR OO MYANMAR" — a title

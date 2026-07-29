@@ -71,7 +71,7 @@ export default function LeftPanel({
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 border-r border-slate-200">
+    <div className="h-full min-h-0 flex flex-col bg-slate-50 border-r border-slate-200">
       <div className="p-2 border-b border-slate-200 shrink-0">
         <input
           className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"

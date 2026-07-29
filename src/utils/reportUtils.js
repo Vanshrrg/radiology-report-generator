@@ -12,8 +12,8 @@ function tighten(text) {
 }
 
 export function formatReport({ studyType, patientName, history, technique, comparison, findings, impression }) {
-  return `${studyType || ''}
-Patient: ${patientName || ''}
+  return `${patientName || ''}
+${studyType || ''}
 
 HISTORY
 ${tighten(history)}
@@ -63,8 +63,8 @@ export async function exportReportDocx({
     sections: [
       {
         children: [
+          new Paragraph({ children: [new TextRun({ text: patientName || '' })] }),
           new Paragraph({ children: [new TextRun({ text: studyType || '', bold: true })] }),
-          new Paragraph({ children: [new TextRun({ text: `Patient: ${patientName || ''}` })] }),
           new Paragraph({ children: [] }),
           ...sectionParagraphs('HISTORY', history),
           new Paragraph({ children: [] }),

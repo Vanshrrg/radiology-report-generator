@@ -751,6 +751,42 @@ export const templates = {
       }
     }
   },
+  "mammogram": {
+    "breast": {
+      "BI-RADS 1 (Negative)": {
+        "history": "Asymptomatic",
+        "studyType": "Mammography and Ultrasound Breasts Both Sides",
+        "technique": "Bilateral digital mammography routine (CC and MLO) views and tomosynthesis both MLO views.",
+        "comparison": "None.",
+        "findings": "MAMMOGRAPHY: Breast tissue: Scattered fibroglandular densities. Mass: Not detectable. Calcifications: Not detectable. Architectural distortion: Not detectable. Asymmetry: Not detectable. Dilated tubular structure: Not detectable. Other: No significant axillary lymphadenopathy, bilaterally.\n\nULTRASOUND: Background echotexture: Homogeneous background echotexture-fibrogladular. Cysts: Not detectable. Mass: Not detectable. Architectural disruption: Not detectable. Other: No significant axillary lymphadenopathy, bilaterally.",
+        "impression": "No radiographic evidence of malignancy.\n\nASSESSMENT: BI-RADS Category 1 (Negative)\n\nRECOMMENDATION: Routine screening mammography if unchanged breast self-exam, monthly.\n\nNOTES: False negative rate of mammography is approximately 10-15%. Management of palpable abnormality must be based on clinical consideration."
+      },
+      "BI-RADS 2 (Benign)": {
+        "history": "Asymptomatic",
+        "studyType": "Mammography and Ultrasound Breasts Both Sides",
+        "technique": "Bilateral digital mammography routine (CC and MLO) views and tomosynthesis both MLO views.",
+        "comparison": "None.",
+        "findings": "MAMMOGRAPHY: Breast tissue: Scattered fibroglandular densities. Mass: Not detectable. Microcalcifications: Diffuse punctate/round microcalcifications at both breasts, benign. Architectural distortion: Not detectable. Asymmetry: Not detectable. Dilated tubular structure: Not detectable. Others: No significant abnormal axillary lymphadenopathy.\n\nULTRASOUND: Background echotexture: Homogeneous background echotexture-fibrogladular. Cyst: A few simple cysts at both breasts, benign. Mass: Not detectable. Architectural disruption: Not detectable. Others: No significant abnormal axillary lymphadenopathy.",
+        "impression": "No radiographic evidence of malignancy.\n\nASSESSMENT: BI-RADS Category 2 (Benign)\n\nRECOMMENDATION: Routine screening mammography if unchanged breast self-exam, monthly.\n\nNOTES: False negative rate of mammography is approximately 10-15%. Management of palpable abnormality must be based on clinical consideration."
+      },
+      "BI-RADS 3 (Probably Benign)": {
+        "history": "Asymptomatic / Follow up probably benign lesion / Palpable mass at",
+        "studyType": "Mammography and Ultrasound Breasts Both Sides",
+        "technique": "Bilateral digital mammography routine (CC and MLO) views and tomosynthesis both MLO views.",
+        "comparison": "None.",
+        "findings": "MAMMOGRAPHY: Breast tissue: Scattered fibroglandular densities. Mass: Not detectable. Microcalcifications: Diffuse punctate/round microcalcifications at both breasts, benign. Architectural distortion: Not detectable. Asymmetry: Not detectable. Dilated tubular structure: Not detectable. Others: No significant axillary lymphadenopathy, bilaterally.\n\nULTRASOUND: Background echotexture: Homogeneous background echotexture-fibrogladular. Cyst: A few simple cysts at both breasts, benign. Mass: A few well-defined oval shape hypoechoic nodules at both breasts, probably benign at\n- M1 =\n- M2 =\nArchitectural disruption: Not detectable. Abnormal vessels: Not detectable. Others: No significant axillary lymphadenopathy, bilaterally.",
+        "impression": "1)\n\n2)\n\nASSESSMENT: BI-RADS Category 3 (Probably benign)\n\nRECOMMENDATION: Suggest 6 months follow up complete study if unchanged breast self-exam, monthly and breast specialist surgeon consultation. Suggested 6 months follow up with ultrasound if unchanged breast self-exam, monthly and breast specialist surgeon consultation.\n\nNOTES: False negative rate of mammography is approximately 10-15%. Management of palpable abnormality must be based on clinical consideration."
+      },
+      "BI-RADS - Full Template (choose category)": {
+        "history": "Asymptomatic",
+        "studyType": "Mammography and Ultrasound Breasts Both Sides",
+        "technique": "Bilateral digital mammography routine (CC and MLO) views and tomosynthesis both MLO views.",
+        "comparison": "None.",
+        "findings": "MAMMOGRAPHY: Breast tissue: Scattered fibroglandular densities. Mass: Not detectable. Calcifications: Diffuse punctate/round microcalcifications at both breasts / Not detectable. Architectural distortion: Not detectable. Asymmetry: Not detectable. Other: Not detectable.\n\nULTRASOUND: Background echotexture: Homogeneous background echotexture-fibrogladular. Cyst: A few simple cysts at both breasts, benign / Not detectable. Mass: A few well-defined oval hypoechoic nodules at both breasts, probably benign at\n- M1 =\n- M2 =\nArchitectural disruption: Not detectable. Others: No significant abnormal axillary lymphadenopathy.",
+        "impression": "1)\n\n2)\n\nOVERALL ASSESSMENT (choose one):\nBI-RADS Category 1 (Negative)\nBI-RADS Category 2 (Benign)\nBI-RADS Category 3 (Probably benign)\nBI-RADS Category 4A (Low suspicious for malignancy)\nBI-RADS Category 4B (Moderate suspicious for malignancy)\nBI-RADS Category 4C (High suspicious for malignancy)\nBI-RADS Category 5 (Highly suggestive of malignancy)\nBI-RADS Category 6 (Known Biopsy-Proven Malignancy)\n\nRECOMMENDATION (choose as applicable):\n- Routine screening mammography if unchanged breast self-exam, monthly\n- Suggest 6 months follow up complete study if unchanged breast self-exam, monthly and breast specialist surgeon consultation\n- Suggested 6 months follow up with ultrasound breast if unchanged breast self-exam, monthly and breast specialist surgeon consultation\n- Ultrasound-guide core needle biopsy and breast specialist surgeon consultation\n- Stereotactic guide core breast biopsy and breast specialist surgeon consultation\n- Vacuum-assisted breast biopsy with ultrasound-guide/stereotactic guide and breast specialist surgeon consultation\n- Excision mass and breast specialist surgeon consultation\n\nNOTES: False negative rate of mammography is approximately 10-15%. Management of palpable abnormality must be based on clinical consideration."
+      }
+    }
+  },
   "us": {
     "kub": {
       "Ultrasound of KUB (Emergency)": {
@@ -799,9 +835,38 @@ export const templates = {
         "findings": "SURGICAL BED/DRAINS: ....\n\nLYMPH NODES: No enlargement.\n\nTHYROID: Right and left lobes are ...cm, respectively. The isthmus is ... mm in thickness. No nodules or mass.\n\nPAROTID: Normal.\n\nSUBMANDIBULAR GLANDS: Normal.\n\nVESSELS: Screening color Doppler shows normal flow in bilateral IJVs, CCAs and ICAs. No significant narrowing of these vessels.\n\nOTHERS: ...",
         "impression": "-\n\n-"
       }
+    },
+    "breast": {
+      "Ultrasound of Breast": {
+        "history": "Asymptomatic",
+        "studyType": "Ultrasound Breasts Both Sides",
+        "technique": "",
+        "comparison": "None.",
+        "findings": "Background echotexture: Homogeneous background echotexture-fibrogladular. Cyst: A few simple cysts at both breasts, benign. Mass: A few well-defined oval hypoechoic nodules at both breasts, probably benign at\n- M1 =\n- M2 =\nArchitectural disruption: Not detectable. Others: No significant abnormal axillary lymphadenopathy.",
+        "impression": "OVERALL ASSESSMENT: BI-RADS Category 3 (Probably benign)\n\nRECOMMENDATION: Suggest 6 months follow up complete study if unchanged breast self-exam, monthly and breast specialist surgeon consultation. Suggested 6 months follow up with ultrasound breast if unchanged breast self-exam, monthly and breast specialist surgeon consultation. Routine screening mammography if unchanged breast self-exam, monthly.\n\nNOTES: Low sensitivity in detect ductal carcinoma in situ (DCIS). Management of palpable abnormality must be based on clinical consideration."
+      }
     }
   },
-  "xray": {}
+  "xray": {
+    "chest": {
+      "Chest PA (Normal)": {
+        "history": "",
+        "studyType": "Chest Radiography PA",
+        "technique": "",
+        "comparison": "None.",
+        "findings": "No active pulmonary infiltration, nodule, or mass is noted.\n\nNo pneumothorax or pleural effusion is shown.\n\nNo cardiomegaly is observed.\n\nBony thorax appears intact.",
+        "impression": "No active pulmonary disease."
+      },
+      "Chest PA (Interstitial Opacities, Follow-up)": {
+        "history": "",
+        "studyType": "Chest Radiography PA",
+        "technique": "",
+        "comparison": "Prior CXR.",
+        "findings": "Suboptimal inspiration.\n\nNo interval change of diffuse interstitial opacities at both lungs.\n\nNo change of blunt bilateral costophrenic angle, suspected pleural thickening.\n\nNo change of flattening of bilateral hemidiaphragm.\n\nNo active pulmonary infiltration, nodule, or mass is noted.\n\nNo pneumothorax is shown.\n\nBony thorax appears intact.",
+        "impression": "No interval change of diffuse interstitial opacities at both lungs.\n\nNo change of blunt bilateral costophrenic angle, suspected pleural thickening.\n\nNo change of flattening of bilateral hemidiaphragm."
+      }
+    }
+  }
 };
 
 export const phrases = {

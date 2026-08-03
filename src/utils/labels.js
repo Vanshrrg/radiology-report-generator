@@ -3,6 +3,7 @@ const MODALITY_LABELS = {
   ct: 'CT',
   mri: 'MRI',
   us: 'Ultrasound',
+  mammogram: 'Mammogram',
 };
 
 const REGION_LABELS = {

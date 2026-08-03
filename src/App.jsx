@@ -5,6 +5,30 @@ import RightPanel from './components/RightPanel.jsx';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
 import { exportUserData, importUserData } from './utils/reportUtils.js';
+import { modalityLabel, regionLabel } from './utils/labels.js';
+
+function slugify(text) {
+  return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+// Reuses an existing modality/region key if the typed text matches its key or
+// display label (case-insensitive), otherwise slugifies the text into a new key.
+function findExistingModalityKey(input, templates) {
+  const norm = input.trim().toLowerCase();
+  for (const key of Object.keys(templates)) {
+    if (key.toLowerCase() === norm || modalityLabel(key).toLowerCase() === norm) return key;
+  }
+  return slugify(input);
+}
+
+function findExistingRegionKey(input, templates, modalityKey) {
+  const norm = input.trim().toLowerCase();
+  const regions = templates[modalityKey] || {};
+  for (const key of Object.keys(regions)) {
+    if (key.toLowerCase() === norm || regionLabel(key).toLowerCase() === norm) return key;
+  }
+  return slugify(input);
+}
 
 const EMPTY_FIELDS = { history: '', technique: '', comparison: 'None.', findings: '', impression: '' };
 
@@ -57,31 +81,53 @@ export default function App() {
     setOpenScope({ modality, region });
   };
 
+  // Prompts for a modality and region, typed as free text so a new one can be
+  // created on the spot — matched back to an existing key/label when it matches
+  // one, otherwise slugified into a new key. Returns null if the user cancels.
+  const promptModalityRegion = (defaultModality, defaultRegion) => {
+    const merged = mergeTemplateTrees(premadeTemplates, userTemplates);
+    const modalityInput = window.prompt(
+      'Modality (e.g. CT, MRI, X-ray, Ultrasound — type a new one to create it):',
+      defaultModality ? modalityLabel(defaultModality) : ''
+    );
+    if (!modalityInput?.trim()) return null;
+    const modality = findExistingModalityKey(modalityInput, merged);
+
+    const regionInput = window.prompt(
+      'Region (e.g. Abdomen, Chest, Brain — type a new one to create it):',
+      defaultRegion ? regionLabel(defaultRegion) : ''
+    );
+    if (!regionInput?.trim()) return null;
+    const region = findExistingRegionKey(regionInput, merged, modality);
+
+    return { modality, region };
+  };
+
   // Save: updates the currently loaded template in place. The template's name
   // comes from what's loaded (or a prompt if nothing is), not from Study type —
   // Study type is the exam performed, not the template's identity. Use the ✏️
-  // icon in the left menu to rename a template.
+  // icon in the left menu to rename a template. If nothing is loaded and no
+  // modality/region is open on the left, prompts for one (new or existing).
   const handleSaveTemplate = () => {
-    const modality = selected?.modality || openScope?.modality;
-    const region = selected?.region || openScope?.region;
+    let modality = selected?.modality || openScope?.modality;
+    let region = selected?.region || openScope?.region;
     if (!modality || !region) {
-      window.alert('Open a modality & region on the left (or load a template) before saving.');
-      return;
+      const picked = promptModalityRegion(modality, region);
+      if (!picked) return;
+      ({ modality, region } = picked);
     }
     const name = selected?.name || window.prompt('Template name:');
     if (!name?.trim()) return;
     saveTemplateTo(modality, region, name.trim());
   };
 
-  // Save As: saves a copy under a new name in the same region, leaving the
-  // original untouched. To file it elsewhere, open that region on the left first.
+  // Save As: saves a copy under a new name, in a modality/region you choose —
+  // pick an existing one or type a new one to create it — leaving the
+  // original template untouched.
   const handleSaveTemplateAs = () => {
-    const modality = selected?.modality || openScope?.modality;
-    const region = selected?.region || openScope?.region;
-    if (!modality || !region) {
-      window.alert('Open a modality & region on the left before saving.');
-      return;
-    }
+    const picked = promptModalityRegion(selected?.modality || openScope?.modality, selected?.region || openScope?.region);
+    if (!picked) return;
+    const { modality, region } = picked;
     const name = window.prompt('Save as new template named:', selected?.name || '');
     if (!name?.trim()) return;
     saveTemplateTo(modality, region, name.trim());
@@ -93,6 +139,37 @@ export default function App() {
       delete next?.[modality]?.[region]?.[name];
       return next;
     });
+  };
+
+  // Removes every custom template saved under this modality/region. Built-in
+  // templates in the same region (if any) are untouched, since they live in
+  // premadeTemplates, not userTemplates.
+  const handleDeleteUserRegion = (modality, region) => {
+    const count = Object.keys(userTemplates[modality]?.[region] || {}).length;
+    if (!count) return;
+    if (!window.confirm(`Delete all ${count} custom template(s) saved under "${regionLabel(region)}"? This can't be undone.`)) return;
+    setUserTemplates(prev => {
+      const next = structuredClone(prev);
+      delete next?.[modality]?.[region];
+      return next;
+    });
+    if (selected?.modality === modality && selected?.region === region) setSelected(null);
+    if (openScope?.modality === modality && openScope?.region === region) setOpenScope({ modality, region: null });
+  };
+
+  // Removes every custom region/template saved under this modality entirely.
+  const handleDeleteUserModality = modality => {
+    const regions = userTemplates[modality] || {};
+    const count = Object.values(regions).reduce((n, r) => n + Object.keys(r || {}).length, 0);
+    if (!count) return;
+    if (!window.confirm(`Delete all ${count} custom template(s) saved under "${modalityLabel(modality)}"? This can't be undone.`)) return;
+    setUserTemplates(prev => {
+      const next = structuredClone(prev);
+      delete next?.[modality];
+      return next;
+    });
+    if (selected?.modality === modality) setSelected(null);
+    if (openScope?.modality === modality) setOpenScope(null);
   };
 
   const handleDeleteCurrentTemplate = () => {
@@ -198,6 +275,8 @@ export default function App() {
           onOpenScopeChange={setOpenScope}
           onDeleteUserTemplate={handleDeleteUserTemplate}
           onRenameUserTemplate={handleRenameUserTemplate}
+          onDeleteUserRegion={handleDeleteUserRegion}
+          onDeleteUserModality={handleDeleteUserModality}
         />
         <ReportEditor
           ref={editorRef}

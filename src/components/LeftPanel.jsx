@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { modalityLabel, regionLabel } from '../utils/labels.js';
 
 function flattenTemplates(templates) {
@@ -22,8 +22,13 @@ export default function LeftPanel({
   onOpenScopeChange,
   onDeleteUserTemplate,
   onRenameUserTemplate,
+  onDeleteUserRegion,
+  onDeleteUserModality,
 }) {
   const [query, setQuery] = useState('');
+  // Right-click menu, scoped to a template, region, or modality row:
+  // { x, y, type: 'template'|'region'|'modality', modality, region, name }.
+  const [contextMenu, setContextMenu] = useState(null);
   const openModality = openScope?.modality ?? null;
   const openRegion = openScope ? `${openScope.modality}.${openScope.region}` : null;
 
@@ -34,38 +39,51 @@ export default function LeftPanel({
     ? flattenTemplates(templates).filter(t => t.name.toLowerCase().includes(q))
     : null;
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [contextMenu]);
+
+  const openTemplateContextMenu = (e, modality, region, name) => {
+    e.preventDefault();
+    if (!userTemplates?.[modality]?.[region]?.[name]) return;
+    setContextMenu({ x: e.clientX, y: e.clientY, type: 'template', modality, region, name });
+  };
+
+  const openRegionContextMenu = (e, modality, region) => {
+    e.preventDefault();
+    if (!Object.keys(userTemplates?.[modality]?.[region] || {}).length) return;
+    setContextMenu({ x: e.clientX, y: e.clientY, type: 'region', modality, region });
+  };
+
+  const openModalityContextMenu = (e, modality) => {
+    e.preventDefault();
+    const regions = userTemplates?.[modality] || {};
+    const hasAny = Object.values(regions).some(r => Object.keys(r || {}).length > 0);
+    if (!hasAny) return;
+    setContextMenu({ x: e.clientX, y: e.clientY, type: 'modality', modality });
+  };
+
   const renderTemplateRow = (modality, region, name) => {
     const isSelected =
       selected && selected.modality === modality && selected.region === region && selected.name === name;
-    const isUserOwned = Boolean(userTemplates?.[modality]?.[region]?.[name]);
     return (
-      <li key={`${modality}-${region}-${name}`} className="group flex items-center">
+      <li key={`${modality}-${region}-${name}`}>
         <button
-          className={`flex-1 text-left pl-8 pr-3 py-1.5 text-sm hover:bg-blue-50 ${
+          className={`w-full text-left pl-8 pr-3 py-1.5 text-sm hover:bg-blue-50 ${
             isSelected ? 'bg-blue-100 text-blue-800 font-medium' : 'text-slate-700'
           }`}
           onClick={() => onSelectTemplate(modality, region, name, templates[modality][region][name])}
+          onContextMenu={e => openTemplateContextMenu(e, modality, region, name)}
         >
           {name}
         </button>
-        {isUserOwned && (
-          <div className="opacity-0 group-hover:opacity-100 flex gap-1 pr-2">
-            <button
-              className="text-slate-400 hover:text-slate-700 text-xs"
-              title="Rename"
-              onClick={() => onRenameUserTemplate(modality, region, name)}
-            >
-              ✏️
-            </button>
-            <button
-              className="text-red-500 hover:text-red-700 text-xs"
-              title="Delete"
-              onClick={() => onDeleteUserTemplate(modality, region, name)}
-            >
-              🗑
-            </button>
-          </div>
-        )}
       </li>
     );
   };
@@ -88,10 +106,11 @@ export default function LeftPanel({
           ) : (
             <ul>
               {searchResults.map(t => (
-                <li key={`${t.modality}-${t.region}-${t.name}`} className="group flex items-center border-b border-slate-100">
+                <li key={`${t.modality}-${t.region}-${t.name}`} className="border-b border-slate-100">
                   <button
-                    className="flex-1 text-left px-3 py-1.5 text-sm hover:bg-blue-50 text-slate-700"
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 text-slate-700"
                     onClick={() => onSelectTemplate(t.modality, t.region, t.name, t.data)}
+                    onContextMenu={e => openTemplateContextMenu(e, t.modality, t.region, t.name)}
                   >
                     <div>{t.name}</div>
                     <div className="text-xs text-slate-400">
@@ -111,6 +130,7 @@ export default function LeftPanel({
                 <button
                   className="w-full text-left px-3 py-2 font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 sticky top-0 flex items-center justify-between"
                   onClick={() => onOpenScopeChange(modalityOpen ? null : { modality, region: null })}
+                  onContextMenu={e => openModalityContextMenu(e, modality)}
                 >
                   <span>{modalityLabel(modality)}</span>
                   <span className="text-xs text-slate-500">{modalityOpen ? '▾' : '▸'}</span>
@@ -128,6 +148,7 @@ export default function LeftPanel({
                             onClick={() =>
                               onOpenScopeChange(regionOpen ? { modality, region: null } : { modality, region })
                             }
+                            onContextMenu={e => openRegionContextMenu(e, modality, region)}
                           >
                             <span>{regionLabel(region)}</span>
                             <span className="text-xs text-slate-400">{regionOpen ? '▾' : '▸'}</span>
@@ -143,6 +164,59 @@ export default function LeftPanel({
           })
         )}
       </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white border border-slate-200 rounded shadow-lg py-1 text-sm min-w-[120px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={e => e.stopPropagation()}
+        >
+          {contextMenu.type === 'template' && (
+            <>
+              <button
+                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 text-slate-700"
+                onClick={() => {
+                  onRenameUserTemplate(contextMenu.modality, contextMenu.region, contextMenu.name);
+                  setContextMenu(null);
+                }}
+              >
+                Rename
+              </button>
+              <button
+                className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
+                onClick={() => {
+                  onDeleteUserTemplate(contextMenu.modality, contextMenu.region, contextMenu.name);
+                  setContextMenu(null);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+          {contextMenu.type === 'region' && (
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
+              onClick={() => {
+                onDeleteUserRegion(contextMenu.modality, contextMenu.region);
+                setContextMenu(null);
+              }}
+            >
+              Delete region
+            </button>
+          )}
+          {contextMenu.type === 'modality' && (
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
+              onClick={() => {
+                onDeleteUserModality(contextMenu.modality);
+                setContextMenu(null);
+              }}
+            >
+              Delete modality
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

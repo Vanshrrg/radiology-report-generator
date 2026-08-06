@@ -24,6 +24,8 @@ export default function LeftPanel({
   onRenameUserTemplate,
   onDeleteUserRegion,
   onDeleteUserModality,
+  collapsed,
+  onToggleCollapsed,
 }) {
   const [query, setQuery] = useState('');
   // Right-click menu, scoped to a template, region, or modality row:
@@ -88,15 +90,36 @@ export default function LeftPanel({
     );
   };
 
+  if (collapsed) {
+    return (
+      <div className="h-full min-h-0 flex flex-col items-center bg-slate-50 border-r border-slate-200 py-2">
+        <button
+          className="text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded px-1 py-2"
+          title="Expand template menu"
+          onClick={onToggleCollapsed}
+        >
+          ▸
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full min-h-0 flex flex-col bg-slate-50 border-r border-slate-200">
-      <div className="p-2 border-b border-slate-200 shrink-0">
+      <div className="p-2 border-b border-slate-200 shrink-0 flex items-center gap-1">
         <input
           className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"
           placeholder="🔍 Search templates..."
           value={query}
           onChange={e => setQuery(e.target.value)}
         />
+        <button
+          className="shrink-0 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded px-1.5 py-1.5"
+          title="Collapse template menu"
+          onClick={onToggleCollapsed}
+        >
+          ◂
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">

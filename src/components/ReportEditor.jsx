@@ -3,13 +3,17 @@ import { formatReport, exportReportDocx, REPORT_SIGNATURE } from '../utils/repor
 import { HISTORY_STARTERS } from '../utils/historyStarters.js';
 
 const MIN_HEIGHT = 44; // px, roughly one line + padding
-// Fields fully stretch to fit their content — no internal scrolling, no cap.
+// Fields grow with their content up to MAX_HEIGHT, then scroll internally —
+// keeps a single long field from pushing every other field off-screen.
+const MAX_HEIGHT = 320; // px
 const DEFAULT_VALUE = { history: '', technique: '', comparison: 'None.', findings: '', impression: '' };
 
 function autoResize(el) {
   if (!el) return;
   el.style.height = 'auto';
-  el.style.height = `${Math.max(el.scrollHeight, MIN_HEIGHT)}px`;
+  const next = Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
+  el.style.height = `${next}px`;
+  el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden';
 }
 
 const ReportEditor = forwardRef(function ReportEditor(
@@ -18,6 +22,7 @@ const ReportEditor = forwardRef(function ReportEditor(
 ) {
   const [activeField, setActiveField] = useState('findings');
   const [copied, setCopied] = useState(false);
+  const scrollRef = useRef(null);
   const textareaRefs = {
     history: useRef(null),
     technique: useRef(null),
@@ -26,8 +31,22 @@ const ReportEditor = forwardRef(function ReportEditor(
     impression: useRef(null),
   };
 
+  // Resizing a textarea to 'auto' first (to shrink-to-fit) then back up can
+  // momentarily shrink the whole scrollable area below the current
+  // scrollTop, which makes the browser clamp it back near the top — and it
+  // never recovers once heights grow back. Recording/restoring scrollTop
+  // around any resize keeps the view from jumping while typing.
+  const withScrollPreserved = fn => {
+    const container = scrollRef.current;
+    const prevScrollTop = container?.scrollTop;
+    fn();
+    if (container && prevScrollTop != null) container.scrollTop = prevScrollTop;
+  };
+
   useEffect(() => {
-    Object.values(textareaRefs).forEach(r => autoResize(r.current));
+    withScrollPreserved(() => {
+      Object.values(textareaRefs).forEach(r => autoResize(r.current));
+    });
   }, [fields.history, fields.technique, fields.comparison, fields.findings, fields.impression]);
 
   const insertIntoField = (field, text) => {
@@ -95,7 +114,7 @@ const ReportEditor = forwardRef(function ReportEditor(
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-2">
           <input
             className="border border-slate-300 rounded px-2 py-1 text-sm"
@@ -154,7 +173,7 @@ const ReportEditor = forwardRef(function ReportEditor(
               onFocus={() => setActiveField(key)}
               onChange={e => {
                 setFields(f => ({ ...f, [key]: e.target.value }));
-                autoResize(e.target);
+                withScrollPreserved(() => autoResize(e.target));
               }}
               spellCheck="true"
               lang="en"

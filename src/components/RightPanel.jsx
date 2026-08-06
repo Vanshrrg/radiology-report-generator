@@ -19,6 +19,8 @@ export default function RightPanel({
   onInsertPhrase,
   onSavePhrase,
   onDeleteUserPhrase,
+  collapsed,
+  onToggleCollapsed,
 }) {
   const [query, setQuery] = useState('');
 
@@ -37,10 +39,33 @@ export default function RightPanel({
   const q = query.trim().toLowerCase();
   const filteredPhrases = q ? scopedPhrases.filter(p => p.searchText.includes(q)) : scopedPhrases;
 
+  if (collapsed) {
+    return (
+      <div className="h-full min-h-0 flex flex-col items-center bg-slate-50 border-l border-slate-200 py-2">
+        <button
+          className="text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded px-1 py-2"
+          title="Expand phrases panel"
+          onClick={onToggleCollapsed}
+        >
+          ◂
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full min-h-0 flex flex-col bg-slate-50 border-l border-slate-200">
       <div className="p-3 border-b border-slate-200">
-        <h2 className="text-sm font-semibold text-slate-700 mb-2">Phrases</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-slate-700">Phrases</h2>
+          <button
+            className="shrink-0 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded px-1.5 py-0.5"
+            title="Collapse phrases panel"
+            onClick={onToggleCollapsed}
+          >
+            ▸
+          </button>
+        </div>
         <input
           className="w-full border border-slate-300 rounded px-3 py-1.5 text-sm"
           placeholder="🔍 Search phrases..."

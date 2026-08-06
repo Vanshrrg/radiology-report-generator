@@ -42,6 +42,10 @@ export default function App() {
   // Which modality/region is expanded in the left menu — the phrase list is
   // scoped to match it.
   const [openScope, setOpenScope] = useState(null);
+  // Collapsing the side panels frees up width for the editor on narrower
+  // windows — user-toggled, not automatic.
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
 
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -264,8 +268,18 @@ export default function App() {
       {/* grid-rows-[minmax(0,1fr)] forces the single row to the container's
           actual height instead of auto-sizing to content — required so each
           panel's own h-full/overflow-y-auto can scroll independently now that
-          the editor's fields stretch instead of capping their own height. */}
-      <div className="flex-1 grid grid-cols-[260px_1fr_300px] grid-rows-[minmax(0,1fr)] min-h-0">
+          the editor's fields stretch instead of capping their own height.
+          Side columns use clamp() so they shrink automatically as the window
+          narrows (down to a usable minimum) instead of forcing the editor
+          (middle, 1fr — the priority field) to a sliver; collapsing either
+          side panel goes further, shrinking it to a thin strip. */}
+      <div
+        className={`flex-1 grid ${leftCollapsed ? 'grid-cols-[36px_1fr_var(--right-w)]' : 'grid-cols-[var(--left-w)_1fr_var(--right-w)]'} grid-rows-[minmax(0,1fr)] min-h-0`}
+        style={{
+          '--left-w': 'clamp(180px, 20vw, 260px)',
+          '--right-w': rightCollapsed ? '36px' : 'clamp(200px, 22vw, 300px)',
+        }}
+      >
         <LeftPanel
           templates={mergeTemplateTrees(premadeTemplates, userTemplates)}
           userTemplates={userTemplates}
@@ -277,6 +291,8 @@ export default function App() {
           onRenameUserTemplate={handleRenameUserTemplate}
           onDeleteUserRegion={handleDeleteUserRegion}
           onDeleteUserModality={handleDeleteUserModality}
+          collapsed={leftCollapsed}
+          onToggleCollapsed={() => setLeftCollapsed(c => !c)}
         />
         <ReportEditor
           ref={editorRef}
@@ -295,6 +311,8 @@ export default function App() {
           onInsertPhrase={handleInsertPhrase}
           onSavePhrase={handleSavePhrase}
           onDeleteUserPhrase={handleDeleteUserPhrase}
+          collapsed={rightCollapsed}
+          onToggleCollapsed={() => setRightCollapsed(c => !c)}
         />
       </div>
     </div>

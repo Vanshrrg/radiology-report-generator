@@ -17,7 +17,17 @@ function autoResize(el) {
 }
 
 const ReportEditor = forwardRef(function ReportEditor(
-  { patientInfo, setPatientInfo, fields, setFields, onSaveTemplate, onSaveTemplateAs, onDeleteCurrentTemplate },
+  {
+    patientInfo,
+    setPatientInfo,
+    fields,
+    setFields,
+    onSaveTemplate,
+    onSaveTemplateAs,
+    onDeleteCurrentTemplate,
+    onUndo,
+    canUndo,
+  },
   ref,
 ) {
   const [activeField, setActiveField] = useState('findings');
@@ -193,6 +203,14 @@ const ReportEditor = forwardRef(function ReportEditor(
         {/* Directly under Signature, in normal flow — not pinned, since fields
             now stretch to full height instead of scrolling internally. */}
         <div className="flex items-center gap-2 flex-wrap pt-1">
+          <button
+            className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-transparent text-sm font-medium px-3 py-2 rounded"
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+          >
+            ↺ Undo
+          </button>
           <button
             className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded"
             onClick={handleCopy}

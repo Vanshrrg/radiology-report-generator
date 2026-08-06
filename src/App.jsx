@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import LeftPanel from './components/LeftPanel.jsx';
 import ReportEditor from './components/ReportEditor.jsx';
 import RightPanel from './components/RightPanel.jsx';
@@ -36,9 +36,65 @@ export default function App() {
   const [userTemplates, setUserTemplates] = useLocalStorage('radiology.userTemplates', {});
   const [userPhrases, setUserPhrases] = useLocalStorage('radiology.userPhrases', {});
 
-  const [patientInfo, setPatientInfo] = useState({ name: '', studyType: '' });
-  const [fields, setFields] = useState(EMPTY_FIELDS);
+  const [patientInfo, setPatientInfoRaw] = useState({ name: '', studyType: '' });
+  const [fields, setFieldsRaw] = useState(EMPTY_FIELDS);
   const [selected, setSelected] = useState(null);
+  // Undo history: a stack of {fields, patientInfo} snapshots taken before each
+  // change, so Ctrl+Z / the Undo button can step back through edits, template
+  // loads, and clears alike. Checkpoints are debounced so a burst of typing
+  // becomes one undo step instead of one per keystroke.
+  const [history, setHistory] = useState([]);
+  const fieldsRef = useRef(fields);
+  const patientInfoRef = useRef(patientInfo);
+  const lastCheckpointRef = useRef(0);
+  fieldsRef.current = fields;
+  patientInfoRef.current = patientInfo;
+
+  const checkpoint = () => {
+    const now = Date.now();
+    if (now - lastCheckpointRef.current < 800) return;
+    lastCheckpointRef.current = now;
+    setHistory(h => [...h.slice(-49), { fields: fieldsRef.current, patientInfo: patientInfoRef.current }]);
+  };
+
+  const setFields = updater => {
+    checkpoint();
+    setFieldsRaw(updater);
+  };
+  const setPatientInfo = updater => {
+    checkpoint();
+    setPatientInfoRaw(updater);
+  };
+
+  // Reads `history` from render scope rather than a setHistory functional
+  // updater — calling other setters as a side effect from inside a setState
+  // updater is unsafe (React 18 StrictMode double-invokes updaters to catch
+  // exactly this, which was silently dropping the restored state).
+  const handleUndo = () => {
+    if (!history.length) return;
+    const prev = history[history.length - 1];
+    setHistory(h => h.slice(0, -1));
+    setFieldsRaw(prev.fields);
+    setPatientInfoRaw(prev.patientInfo);
+  };
+
+  // The listener is registered once ([] deps) so it must reach the latest
+  // handleUndo via a ref — capturing it directly would freeze the closure on
+  // the first render's (always-empty) history and Ctrl+Z would never undo
+  // anything past that.
+  const handleUndoRef = useRef(handleUndo);
+  handleUndoRef.current = handleUndo;
+
+  useEffect(() => {
+    const onKeyDown = e => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndoRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   // Which modality/region is expanded in the left menu — the phrase list is
   // scoped to match it.
   const [openScope, setOpenScope] = useState(null);
@@ -303,6 +359,8 @@ export default function App() {
           onSaveTemplate={handleSaveTemplate}
           onSaveTemplateAs={handleSaveTemplateAs}
           onDeleteCurrentTemplate={handleDeleteCurrentTemplate}
+          onUndo={handleUndo}
+          canUndo={history.length > 0}
         />
         <RightPanel
           premadePhrases={premadePhrases}

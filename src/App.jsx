@@ -102,6 +102,9 @@ export default function App() {
   // windows — user-toggled, not automatic.
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  // Phone-width layout: templates & phrases live in slide-in drawers instead
+  // of side columns, so the report fields get the full screen. null | 'templates' | 'phrases'.
+  const [mobilePanel, setMobilePanel] = useState(null);
 
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -109,6 +112,7 @@ export default function App() {
   const handleSelectTemplate = (modality, region, name, data) => {
     setSelected({ modality, region, name });
     setOpenScope({ modality, region });
+    setMobilePanel(null);
     setFields({
       history: data.history || '',
       technique: data.technique || '',
@@ -124,6 +128,7 @@ export default function App() {
 
   const handleInsertPhrase = phrase => {
     editorRef.current?.insertAtCursor(phrase);
+    setMobilePanel(null);
   };
 
   const saveTemplateTo = (modality, region, name) => {
@@ -286,22 +291,47 @@ export default function App() {
     setUserPhrases(prev => ({ ...prev, [key]: (prev[key] || []).filter(p => p !== phrase) }));
   };
 
+  const mergedTemplates = mergeTemplateTrees(premadeTemplates, userTemplates);
+
   return (
     <div className="h-screen flex flex-col">
-      <header className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Radiology Report Generator</h1>
-        {/* Saved templates/phrases only live in this browser, so these are the
-            way to carry them to another PC. Kept low-key — they're occasional. */}
-        <div className="flex items-center gap-1 text-xs">
+      <header
+        className="px-2 sm:px-4 py-2.5 bg-slate-900 text-white flex items-center justify-between gap-2 shrink-0"
+        style={{ paddingTop: 'max(0.625rem, env(safe-area-inset-top))' }}
+      >
+        {/* Templates trigger — drawer on phones, redundant with the always-visible
+            left column on md+ screens (hidden there). */}
+        <button
+          className="md:hidden shrink-0 text-white/90 hover:bg-slate-800 rounded p-2 -ml-1"
+          title="Templates"
+          aria-label="Open templates"
+          onClick={() => setMobilePanel('templates')}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+
+        <h1 className="text-sm sm:text-lg font-semibold truncate min-w-0">
+          <span className="sm:hidden">Report Generator</span>
+          <span className="hidden sm:inline">Radiology Report Generator</span>
+        </h1>
+
+        <div className="flex items-center gap-1 text-xs shrink-0">
+          {/* Saved templates/phrases only live in this browser, so these are the
+              way to carry them to another PC. Kept low-key — they're occasional,
+              and hidden on phones to keep the header uncluttered. */}
           <button
-            className="text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded"
+            className="hidden md:inline text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded"
             onClick={() => exportUserData(userTemplates, userPhrases)}
             title="Download your saved templates & phrases as a backup file"
           >
             Back up
           </button>
           <button
-            className="text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded"
+            className="hidden md:inline text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded"
             onClick={() => fileInputRef.current?.click()}
             title="Restore saved templates & phrases from a backup file"
           >
@@ -318,6 +348,22 @@ export default function App() {
               e.target.value = '';
             }}
           />
+          {/* Phrases trigger — drawer on phones. */}
+          <button
+            className="md:hidden shrink-0 text-white/90 hover:bg-slate-800 rounded p-2 -mr-1"
+            title="Phrases"
+            aria-label="Open phrases"
+            onClick={() => setMobilePanel('phrases')}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -328,28 +374,33 @@ export default function App() {
           Side columns use clamp() so they shrink automatically as the window
           narrows (down to a usable minimum) instead of forcing the editor
           (middle, 1fr — the priority field) to a sliver; collapsing either
-          side panel goes further, shrinking it to a thin strip. */}
+          side panel goes further, shrinking it to a thin strip.
+          Below the md breakpoint this collapses to a single column — the
+          report fields are the priority on a phone, templates/phrases move
+          into the slide-in drawers below instead of side columns. */}
       <div
-        className={`flex-1 grid ${leftCollapsed ? 'grid-cols-[36px_1fr_var(--right-w)]' : 'grid-cols-[var(--left-w)_1fr_var(--right-w)]'} grid-rows-[minmax(0,1fr)] min-h-0`}
+        className={`flex-1 grid grid-cols-1 ${leftCollapsed ? 'md:grid-cols-[36px_1fr_var(--right-w)]' : 'md:grid-cols-[var(--left-w)_1fr_var(--right-w)]'} grid-rows-[minmax(0,1fr)] min-h-0`}
         style={{
           '--left-w': 'clamp(180px, 20vw, 260px)',
           '--right-w': rightCollapsed ? '36px' : 'clamp(200px, 22vw, 300px)',
         }}
       >
-        <LeftPanel
-          templates={mergeTemplateTrees(premadeTemplates, userTemplates)}
-          userTemplates={userTemplates}
-          onSelectTemplate={handleSelectTemplate}
-          selected={selected}
-          openScope={openScope}
-          onOpenScopeChange={setOpenScope}
-          onDeleteUserTemplate={handleDeleteUserTemplate}
-          onRenameUserTemplate={handleRenameUserTemplate}
-          onDeleteUserRegion={handleDeleteUserRegion}
-          onDeleteUserModality={handleDeleteUserModality}
-          collapsed={leftCollapsed}
-          onToggleCollapsed={() => setLeftCollapsed(c => !c)}
-        />
+        <div className="hidden md:block h-full min-h-0">
+          <LeftPanel
+            templates={mergedTemplates}
+            userTemplates={userTemplates}
+            onSelectTemplate={handleSelectTemplate}
+            selected={selected}
+            openScope={openScope}
+            onOpenScopeChange={setOpenScope}
+            onDeleteUserTemplate={handleDeleteUserTemplate}
+            onRenameUserTemplate={handleRenameUserTemplate}
+            onDeleteUserRegion={handleDeleteUserRegion}
+            onDeleteUserModality={handleDeleteUserModality}
+            collapsed={leftCollapsed}
+            onToggleCollapsed={() => setLeftCollapsed(c => !c)}
+          />
+        </div>
         <ReportEditor
           ref={editorRef}
           patientInfo={patientInfo}
@@ -362,17 +413,76 @@ export default function App() {
           onUndo={handleUndo}
           canUndo={history.length > 0}
         />
-        <RightPanel
-          premadePhrases={premadePhrases}
-          userPhrases={userPhrases}
-          openScope={openScope}
-          onInsertPhrase={handleInsertPhrase}
-          onSavePhrase={handleSavePhrase}
-          onDeleteUserPhrase={handleDeleteUserPhrase}
-          collapsed={rightCollapsed}
-          onToggleCollapsed={() => setRightCollapsed(c => !c)}
-        />
+        <div className="hidden md:block h-full min-h-0">
+          <RightPanel
+            premadePhrases={premadePhrases}
+            userPhrases={userPhrases}
+            openScope={openScope}
+            onInsertPhrase={handleInsertPhrase}
+            onSavePhrase={handleSavePhrase}
+            onDeleteUserPhrase={handleDeleteUserPhrase}
+            collapsed={rightCollapsed}
+            onToggleCollapsed={() => setRightCollapsed(c => !c)}
+          />
+        </div>
       </div>
+
+      {/* Phone drawers: templates (left) & phrases (right) slide over the
+          editor instead of sharing the screen with it, so the report fields
+          keep the full width the rest of the time. */}
+      {mobilePanel && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobilePanel(null)} />
+          <div
+            className={`absolute inset-y-0 ${mobilePanel === 'templates' ? 'left-0' : 'right-0'} w-[86vw] max-w-sm bg-white shadow-xl flex flex-col`}
+          >
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200 shrink-0">
+              <span className="font-semibold text-slate-700">
+                {mobilePanel === 'templates' ? 'Templates' : 'Phrases'}
+              </span>
+              <button
+                className="text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded p-1.5"
+                aria-label="Close"
+                onClick={() => setMobilePanel(null)}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="4" y1="4" x2="20" y2="20" />
+                  <line x1="20" y1="4" x2="4" y2="20" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              {mobilePanel === 'templates' ? (
+                <LeftPanel
+                  templates={mergedTemplates}
+                  userTemplates={userTemplates}
+                  onSelectTemplate={handleSelectTemplate}
+                  selected={selected}
+                  openScope={openScope}
+                  onOpenScopeChange={setOpenScope}
+                  onDeleteUserTemplate={handleDeleteUserTemplate}
+                  onRenameUserTemplate={handleRenameUserTemplate}
+                  onDeleteUserRegion={handleDeleteUserRegion}
+                  onDeleteUserModality={handleDeleteUserModality}
+                  collapsed={false}
+                  onToggleCollapsed={() => setMobilePanel(null)}
+                />
+              ) : (
+                <RightPanel
+                  premadePhrases={premadePhrases}
+                  userPhrases={userPhrases}
+                  openScope={openScope}
+                  onInsertPhrase={handleInsertPhrase}
+                  onSavePhrase={handleSavePhrase}
+                  onDeleteUserPhrase={handleDeleteUserPhrase}
+                  collapsed={false}
+                  onToggleCollapsed={() => setMobilePanel(null)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

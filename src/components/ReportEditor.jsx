@@ -124,16 +124,20 @@ const ReportEditor = forwardRef(function ReportEditor(
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-3 md:p-4 flex flex-col gap-3"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+      >
         <div className="grid grid-cols-2 gap-2">
           <input
-            className="border border-slate-300 rounded px-2 py-1 text-sm"
+            className="border border-slate-300 rounded px-2 py-1.5 md:py-1 text-base md:text-sm"
             placeholder="Patient name"
             value={patientInfo.name}
             onChange={e => setPatientInfo(p => ({ ...p, name: e.target.value }))}
           />
           <input
-            className="border border-slate-300 rounded px-2 py-1 text-sm"
+            className="border border-slate-300 rounded px-2 py-1.5 md:py-1 text-base md:text-sm"
             placeholder="Study type"
             value={patientInfo.studyType}
             onChange={e => setPatientInfo(p => ({ ...p, studyType: e.target.value }))}
@@ -177,7 +181,7 @@ const ReportEditor = forwardRef(function ReportEditor(
             )}
             <textarea
               ref={textareaRefs[key]}
-              className="border border-slate-300 rounded p-2 text-sm resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-300"
+              className="border border-slate-300 rounded p-2 text-base md:text-sm resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-300"
               style={{ height: MIN_HEIGHT }}
               value={fields[key] || ''}
               onFocus={() => setActiveField(key)}

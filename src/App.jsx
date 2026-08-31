@@ -4,7 +4,7 @@ import ReportEditor from './components/ReportEditor.jsx';
 import RightPanel from './components/RightPanel.jsx';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
-import { exportUserData, importUserData } from './utils/reportUtils.js';
+import { exportUserData, importUserData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
 import { modalityLabel, regionLabel } from './utils/labels.js';
 
 function slugify(text) {
@@ -52,6 +52,12 @@ export default function App() {
   // becomes one undo step instead of one per keystroke.
   // Persisted alongside the draft so undo still works after a reload.
   const [history, setHistory] = useLocalStorage('radiology.draft.history', []);
+  // Redo is the other half of undo: without it, one Ctrl+Z too many loses text
+  // with no way back. Any fresh edit invalidates it, as usual.
+  const [redoStack, setRedoStack] = useLocalStorage('radiology.draft.redo', []);
+  // The sign-off is per-user, not per-install — editable in the editor and kept
+  // in this browser rather than hard-coded in the source.
+  const [signature, setSignature] = useLocalStorage('radiology.signature', DEFAULT_SIGNATURE);
   const fieldsRef = useRef(fields);
   const patientInfoRef = useRef(patientInfo);
   const lastCheckpointRef = useRef(0);
@@ -67,10 +73,12 @@ export default function App() {
 
   const setFields = updater => {
     checkpoint();
+    setRedoStack([]);
     setFieldsRaw(updater);
   };
   const setPatientInfo = updater => {
     checkpoint();
+    setRedoStack([]);
     setPatientInfoRaw(updater);
   };
 
@@ -82,8 +90,20 @@ export default function App() {
     if (!history.length) return;
     const prev = history[history.length - 1];
     setHistory(h => h.slice(0, -1));
+    setRedoStack(r => [...r.slice(-49), { fields: fieldsRef.current, patientInfo: patientInfoRef.current }]);
     setFieldsRaw(prev.fields);
     setPatientInfoRaw(prev.patientInfo);
+  };
+
+  // Mirror image of handleUndo: the state being left behind goes back onto the
+  // undo stack, so you can step forwards and backwards through the same edits.
+  const handleRedo = () => {
+    if (!redoStack.length) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(r => r.slice(0, -1));
+    setHistory(h => [...h.slice(-49), { fields: fieldsRef.current, patientInfo: patientInfoRef.current }]);
+    setFieldsRaw(next.fields);
+    setPatientInfoRaw(next.patientInfo);
   };
 
   // The listener is registered once ([] deps) so it must reach the latest
@@ -92,10 +112,19 @@ export default function App() {
   // anything past that.
   const handleUndoRef = useRef(handleUndo);
   handleUndoRef.current = handleUndo;
+  const handleRedoRef = useRef(handleRedo);
+  handleRedoRef.current = handleRedo;
 
   useEffect(() => {
     const onKeyDown = e => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      // Ctrl+Shift+Z and Ctrl+Y are both redo — Windows apps are split between
+      // the two conventions, so accept either.
+      if ((key === 'z' && e.shiftKey) || key === 'y') {
+        e.preventDefault();
+        handleRedoRef.current();
+      } else if (key === 'z') {
         e.preventDefault();
         handleUndoRef.current();
       }
@@ -103,6 +132,17 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  // Brief, non-blocking confirmations — used where an action silently replaces
+  // what's on screen (loading a template) and the way back isn't obvious.
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const showToast = message => {
+    setToast(message);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  };
+  useEffect(() => () => clearTimeout(toastTimerRef.current), []);
 
   // "Saved" timestamp for the editor's autosave hint. Skipped on the first
   // render — restoring a draft isn't a save the user just made.
@@ -153,11 +193,15 @@ export default function App() {
     // template's name — templates filed under a disease name (e.g. "Hepatocellular
     // Carcinoma") still carry their own real study type separately.
     setPatientInfo(p => ({ ...p, studyType: data.studyType || name }));
+    // Loading a template overwrites all five fields at once. It's undoable, but
+    // nothing on screen said so — a stray click used to look like lost work.
+    showToast(`Loaded "${name}" — press Ctrl+Z to undo`);
   };
 
+  // Deliberately leaves the phone drawer open — phrases are inserted several at
+  // a time, and closing after each one meant reopening it for every insert.
   const handleInsertPhrase = phrase => {
     editorRef.current?.insertAtCursor(phrase);
-    setMobilePanel(null);
   };
 
   const saveTemplateTo = (modality, region, name) => {
@@ -441,8 +485,12 @@ export default function App() {
           onDeleteCurrentTemplate={handleDeleteCurrentTemplate}
           onUndo={handleUndo}
           canUndo={history.length > 0}
+          onRedo={handleRedo}
+          canRedo={redoStack.length > 0}
           onNewReport={handleNewReport}
           savedAt={savedAt}
+          signature={signature}
+          setSignature={setSignature}
         />
         <div className="hidden md:block h-full min-h-0">
           <RightPanel
@@ -457,6 +505,16 @@ export default function App() {
           />
         </div>
       </div>
+
+      {toast && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2 rounded-full shadow-lg"
+          style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}
+          role="status"
+        >
+          {toast}
+        </div>
+      )}
 
       {/* Phone drawers: templates (left) & phrases (right) slide over the
           editor instead of sharing the screen with it, so the report fields

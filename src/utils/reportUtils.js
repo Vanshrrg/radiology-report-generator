@@ -1,9 +1,9 @@
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 
-// Fixed reporting signature appended to every report. Not exposed as an
-// editable field on purpose — it isn't part of the report content the user
-// edits, it's the sign-off every report carries regardless.
-export const REPORT_SIGNATURE = 'Waratchaya M.D.';
+// Default sign-off appended to every report. The signature is editable and
+// stored per browser (see App's radiology.signature) — this is only the value a
+// fresh install starts with, and the fallback if it's ever cleared.
+export const DEFAULT_SIGNATURE = 'Waratchaya M.D.';
 
 // Collapses blank lines within a field's own text so lines that belong
 // together (e.g. a bulleted findings list) aren't spaced apart from each other.
@@ -11,7 +11,17 @@ function tighten(text) {
   return (text || '').split('\n').filter(line => line.trim() !== '').join('\n');
 }
 
-export function formatReport({ studyType, patientName, history, technique, comparison, findings, impression }) {
+export function formatReport({
+  studyType,
+  patientName,
+  history,
+  technique,
+  comparison,
+  findings,
+  impression,
+  signature,
+}) {
+  const signOff = signature?.trim() || DEFAULT_SIGNATURE;
   return `${patientName || ''}
 
 ${studyType || ''}
@@ -31,7 +41,7 @@ ${tighten(findings)}
 IMPRESSION
 ${tighten(impression)}
 
-${REPORT_SIGNATURE}`;
+${signOff}`;
 }
 
 // Matches the source dictation templates' own layout: a plain "LABEL: content"
@@ -59,7 +69,9 @@ export async function exportReportDocx({
   comparison,
   findings,
   impression,
+  signature,
 }) {
+  const signOff = signature?.trim() || DEFAULT_SIGNATURE;
   const doc = new Document({
     sections: [
       {
@@ -78,14 +90,22 @@ export async function exportReportDocx({
           new Paragraph({ children: [] }),
           ...sectionParagraphs('IMPRESSION', impression),
           new Paragraph({ children: [] }),
-          new Paragraph({ children: [new TextRun(REPORT_SIGNATURE)] }),
+          new Paragraph({ children: [new TextRun(signOff)] }),
         ],
       },
     ],
   });
 
   const blob = await Packer.toBlob(doc);
-  const safeName = (studyType || 'report').replace(/[^\w\- ]/g, '').trim().replace(/\s+/g, '-') || 'report';
+  // Patient, study and date all go in the filename — naming files after the
+  // study type alone meant every abdomen CT landed as "CT-Whole-Abdomen (1).docx",
+  // "(2)", and so on, with no way to tell them apart in the Downloads folder.
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeName =
+    [patientName, studyType, stamp]
+      .map(part => (part || '').replace(/[^\w\- ]/g, '').trim().replace(/\s+/g, '-'))
+      .filter(Boolean)
+      .join('_') || 'report';
   downloadBlob(blob, `${safeName}.docx`);
 }
 

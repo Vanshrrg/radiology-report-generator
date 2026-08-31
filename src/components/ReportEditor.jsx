@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef, useState } from 'react';
-import { formatReport, exportReportDocx, REPORT_SIGNATURE } from '../utils/reportUtils.js';
+import { formatReport, exportReportDocx } from '../utils/reportUtils.js';
 import { HISTORY_STARTERS } from '../utils/historyStarters.js';
 
 const MIN_HEIGHT = 44; // px, roughly one line + padding
@@ -7,6 +7,28 @@ const MIN_HEIGHT = 44; // px, roughly one line + padding
 // keeps a single long field from pushing every other field off-screen.
 const MAX_HEIGHT = 320; // px
 const DEFAULT_VALUE = { history: '', technique: '', comparison: 'None.', findings: '', impression: '' };
+
+// Phrases are whole sentences/lines, so they get their own line ('block');
+// history chips are sentence fragments typed inline, so they only get a space
+// ('inline'). Without this, clicking a phrase produced runs like
+// "...no focal lesion.LIVER: Normal size." with no separator at all.
+function isSpace(ch) {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t';
+}
+
+function separated(before, after, text, mode) {
+  let out = text;
+  const lead = out[0];
+  const tail = out[out.length - 1];
+  if (mode === 'block') {
+    if (before.length && !isSpace(before[before.length - 1])) out = '\n' + out;
+    if (after.length && !isSpace(after[0]) && !isSpace(tail)) out = out + '\n';
+  } else {
+    if (before.length && !isSpace(before[before.length - 1]) && !isSpace(lead)) out = ' ' + out;
+    if (after.length && !isSpace(after[0]) && !isSpace(tail)) out = out + ' ';
+  }
+  return out;
+}
 
 function autoResize(el) {
   if (!el) return;
@@ -29,6 +51,10 @@ const ReportEditor = forwardRef(function ReportEditor(
     canUndo,
     onNewReport,
     savedAt,
+    onRedo,
+    canRedo,
+    signature,
+    setSignature,
   },
   ref,
 ) {
@@ -61,16 +87,18 @@ const ReportEditor = forwardRef(function ReportEditor(
     });
   }, [fields.history, fields.technique, fields.comparison, fields.findings, fields.impression]);
 
-  const insertIntoField = (field, text) => {
+  const insertIntoField = (field, text, mode = 'inline') => {
     const el = textareaRefs[field].current;
     const current = fields[field] || '';
     if (!el) {
-      setFields(f => ({ ...f, [field]: (current ? current + ' ' : '') + text }));
+      const piece = separated(current, '', text, mode);
+      setFields(f => ({ ...f, [field]: current + piece }));
       return;
     }
     const start = el.selectionStart ?? current.length;
     const end = el.selectionEnd ?? current.length;
-    const next = current.slice(0, start) + text + current.slice(end);
+    const piece = separated(current.slice(0, start), current.slice(end), text, mode);
+    const next = current.slice(0, start) + piece + current.slice(end);
     setFields(f => ({ ...f, [field]: next }));
     // Focusing and moving the caret both make the browser scroll the element
     // into view, which yanks the page (and the field's own scroll) around when
@@ -82,7 +110,7 @@ const ReportEditor = forwardRef(function ReportEditor(
     const prevFieldScrollTop = el.scrollTop;
     requestAnimationFrame(() => {
       el.focus({ preventScroll: true });
-      const pos = start + text.length;
+      const pos = start + piece.length;
       el.setSelectionRange(pos, pos);
       el.scrollTop = prevFieldScrollTop;
       if (container && prevScrollTop != null) container.scrollTop = prevScrollTop;
@@ -91,12 +119,33 @@ const ReportEditor = forwardRef(function ReportEditor(
 
   useImperativeHandle(ref, () => ({
     insertAtCursor(text) {
-      insertIntoField(activeField, text);
+      insertIntoField(activeField, text, 'block');
     },
   }));
 
   const clearField = key => {
     setFields(f => ({ ...f, [key]: DEFAULT_VALUE[key] }));
+  };
+
+  // navigator.clipboard rejects when the page isn't in a secure context or the
+  // permission is denied — unhandled, the button simply looked dead. Falls back
+  // to the old execCommand path, and says so plainly if even that fails.
+  const legacyCopy = text => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
   };
 
   const handleCopy = async () => {
@@ -108,8 +157,19 @@ const ReportEditor = forwardRef(function ReportEditor(
       comparison: fields.comparison,
       findings: fields.findings,
       impression: fields.impression,
+      signature,
     });
-    await navigator.clipboard.writeText(report);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(report);
+      ok = true;
+    } catch {
+      ok = legacyCopy(report);
+    }
+    if (!ok) {
+      window.alert("Couldn't copy to the clipboard — your browser blocked it. Use Export as DOCX, or select the text and copy manually.");
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -123,6 +183,7 @@ const ReportEditor = forwardRef(function ReportEditor(
       comparison: fields.comparison,
       findings: fields.findings,
       impression: fields.impression,
+      signature,
     });
   };
 
@@ -182,7 +243,7 @@ const ReportEditor = forwardRef(function ReportEditor(
                         type="button"
                         className="text-xs bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 px-2 py-0.5 rounded-full border border-slate-200"
                         title={`Insert "${text.trim()}"`}
-                        onClick={() => insertIntoField('history', text)}
+                        onClick={() => insertIntoField('history', text, 'inline')}
                       >
                         {chipLabel}
                       </button>
@@ -213,13 +274,17 @@ const ReportEditor = forwardRef(function ReportEditor(
           </div>
         ))}
 
-        {/* Fixed sign-off appended to every report — shown so it's clear it's
-            included, but it isn't an editable field. */}
+        {/* Sign-off appended to every report. Editable and remembered in this
+            browser, so it isn't part of the report content that Clear/New wipe. */}
         <div className="flex flex-col shrink-0">
           <span className="text-sm font-semibold text-slate-700 mb-1">Signature</span>
-          <div className="px-2 py-1.5 text-sm text-slate-500 italic bg-slate-50 border border-dashed border-slate-200 rounded">
-            {REPORT_SIGNATURE}
-          </div>
+          <input
+            className="px-2 py-1.5 text-base md:text-sm italic bg-slate-50 border border-dashed border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
+            value={signature}
+            placeholder="Your name, M.D."
+            title="Appears at the end of every report — saved in this browser"
+            onChange={e => setSignature(e.target.value)}
+          />
         </div>
 
         {/* Directly under Signature, in normal flow — not pinned, since fields
@@ -232,6 +297,14 @@ const ReportEditor = forwardRef(function ReportEditor(
             title="Undo (Ctrl+Z)"
           >
             ↺ Undo
+          </button>
+          <button
+            className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-transparent text-sm font-medium px-3 py-2 rounded"
+            onClick={onRedo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Shift+Z or Ctrl+Y)"
+          >
+            ↻ Redo
           </button>
           <button
             className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded"

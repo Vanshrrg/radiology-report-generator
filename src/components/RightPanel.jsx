@@ -36,8 +36,13 @@ export default function RightPanel({
     ? allPhrases.filter(p => p.modality === openScope.modality && p.region === openScope.region)
     : [];
 
+  // Browsing (no query) stays scoped to the modality/region open on the left.
+  // Searching goes across every region — a phrase you can't place was otherwise
+  // unfindable, since you had to already know which region it lived under. Each
+  // result then says where it came from.
   const q = query.trim().toLowerCase();
-  const filteredPhrases = q ? scopedPhrases.filter(p => p.searchText.includes(q)) : scopedPhrases;
+  const searching = q.length > 0;
+  const filteredPhrases = searching ? allPhrases.filter(p => p.searchText.includes(q)) : scopedPhrases;
 
   if (collapsed) {
     return (
@@ -68,18 +73,24 @@ export default function RightPanel({
         </div>
         <input
           className="w-full border border-slate-300 rounded px-3 py-1.5 text-sm"
-          placeholder="🔍 Search phrases..."
+          placeholder="🔍 Search all phrases..."
           value={query}
           onChange={e => setQuery(e.target.value)}
         />
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {!hasScope && (
-          <div className="p-4 text-sm text-slate-400">Open a modality &amp; region on the left to see its phrases.</div>
+        {!hasScope && !searching && (
+          <div className="p-4 text-sm text-slate-400">
+            Open a modality &amp; region on the left to see its phrases — or search here to look across all of them.
+          </div>
         )}
 
-        {hasScope && filteredPhrases.length === 0 && (
+        {searching && filteredPhrases.length === 0 && (
+          <div className="p-4 text-sm text-slate-400">No phrase matches “{query.trim()}”.</div>
+        )}
+
+        {!searching && hasScope && filteredPhrases.length === 0 && (
           <div className="p-4 text-sm text-slate-400">
             No phrases yet for {modalityLabel(openScope.modality)} · {regionLabel(openScope.region)}.
           </div>
@@ -91,7 +102,14 @@ export default function RightPanel({
             onClick={() => onInsertPhrase(p.phrase)}
             title="Click to insert at cursor"
           >
-            <div className="text-slate-800">{p.phrase}</div>
+            <div className="min-w-0">
+              <div className="text-slate-800">{p.phrase}</div>
+              {searching && (
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {modalityLabel(p.modality)} · {regionLabel(p.region)}
+                </div>
+              )}
+            </div>
             {p.source === 'user' && (
               <button
                 className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-xs px-2 shrink-0"

@@ -36,14 +36,22 @@ export default function App() {
   const [userTemplates, setUserTemplates] = useLocalStorage('radiology.userTemplates', {});
   const [userPhrases, setUserPhrases] = useLocalStorage('radiology.userPhrases', {});
 
-  const [patientInfo, setPatientInfoRaw] = useState({ name: '', studyType: '' });
-  const [fields, setFieldsRaw] = useState(EMPTY_FIELDS);
+  // Draft autosave: the report being typed is kept in localStorage, not just
+  // in React state, so an accidental refresh, tab close, browser crash or power
+  // cut brings the text back instead of losing it. useLocalStorage writes on
+  // every change, so at most the last keystroke is ever at risk.
+  const [patientInfo, setPatientInfoRaw] = useLocalStorage('radiology.draft.patientInfo', {
+    name: '',
+    studyType: '',
+  });
+  const [fields, setFieldsRaw] = useLocalStorage('radiology.draft.fields', EMPTY_FIELDS);
   const [selected, setSelected] = useState(null);
   // Undo history: a stack of {fields, patientInfo} snapshots taken before each
   // change, so Ctrl+Z / the Undo button can step back through edits, template
   // loads, and clears alike. Checkpoints are debounced so a burst of typing
   // becomes one undo step instead of one per keystroke.
-  const [history, setHistory] = useState([]);
+  // Persisted alongside the draft so undo still works after a reload.
+  const [history, setHistory] = useLocalStorage('radiology.draft.history', []);
   const fieldsRef = useRef(fields);
   const patientInfoRef = useRef(patientInfo);
   const lastCheckpointRef = useRef(0);
@@ -95,6 +103,27 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  // "Saved" timestamp for the editor's autosave hint. Skipped on the first
+  // render — restoring a draft isn't a save the user just made.
+  const [savedAt, setSavedAt] = useState(null);
+  const firstRenderRef = useRef(true);
+  useEffect(() => {
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      return;
+    }
+    setSavedAt(Date.now());
+  }, [fields, patientInfo]);
+
+  // Starts a blank report. Goes through setFields/setPatientInfo so it lands on
+  // the undo stack — clearing by accident is recoverable with Ctrl+Z.
+  const handleNewReport = () => {
+    if (!window.confirm('Clear the current report and start a new one? (Undo can bring it back.)')) return;
+    setFields(EMPTY_FIELDS);
+    setPatientInfo({ name: '', studyType: '' });
+    setSelected(null);
+  };
   // Which modality/region is expanded in the left menu — the phrase list is
   // scoped to match it.
   const [openScope, setOpenScope] = useState(null);
@@ -412,6 +441,8 @@ export default function App() {
           onDeleteCurrentTemplate={handleDeleteCurrentTemplate}
           onUndo={handleUndo}
           canUndo={history.length > 0}
+          onNewReport={handleNewReport}
+          savedAt={savedAt}
         />
         <div className="hidden md:block h-full min-h-0">
           <RightPanel

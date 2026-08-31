@@ -27,6 +27,8 @@ const ReportEditor = forwardRef(function ReportEditor(
     onDeleteCurrentTemplate,
     onUndo,
     canUndo,
+    onNewReport,
+    savedAt,
   },
   ref,
 ) {
@@ -70,10 +72,20 @@ const ReportEditor = forwardRef(function ReportEditor(
     const end = el.selectionEnd ?? current.length;
     const next = current.slice(0, start) + text + current.slice(end);
     setFields(f => ({ ...f, [field]: next }));
+    // Focusing and moving the caret both make the browser scroll the element
+    // into view, which yanks the page (and the field's own scroll) around when
+    // a phrase is inserted. preventScroll stops the page-level jump; recording
+    // and restoring both scroll positions covers the caret move as well, so the
+    // text simply appears where it was typed.
+    const container = scrollRef.current;
+    const prevScrollTop = container?.scrollTop;
+    const prevFieldScrollTop = el.scrollTop;
     requestAnimationFrame(() => {
-      el.focus();
+      el.focus({ preventScroll: true });
       const pos = start + text.length;
       el.setSelectionRange(pos, pos);
+      el.scrollTop = prevFieldScrollTop;
+      if (container && prevScrollTop != null) container.scrollTop = prevScrollTop;
     });
   };
 
@@ -179,6 +191,9 @@ const ReportEditor = forwardRef(function ReportEditor(
                 ))}
               </div>
             )}
+            {/* Chrome only shows red squiggles and its right-click spelling
+                suggestions when the field opts in explicitly; writingsuggestions
+                turns on Chrome's inline writing suggestions on top of that. */}
             <textarea
               ref={textareaRefs[key]}
               className="border border-slate-300 rounded p-2 text-base md:text-sm resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-300"
@@ -189,8 +204,11 @@ const ReportEditor = forwardRef(function ReportEditor(
                 setFields(f => ({ ...f, [key]: e.target.value }));
                 withScrollPreserved(() => autoResize(e.target));
               }}
-              spellCheck="true"
-              lang="en"
+              spellCheck={true}
+              writingsuggestions="true"
+              autoCorrect="on"
+              autoCapitalize="sentences"
+              lang="en-US"
             />
           </div>
         ))}
@@ -248,6 +266,18 @@ const ReportEditor = forwardRef(function ReportEditor(
           >
             Delete
           </button>
+          <button
+            className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-sm font-medium px-3 py-2 rounded"
+            onClick={onNewReport}
+            title="Clear the report and start a new one (undoable)"
+          >
+            New
+          </button>
+          {/* Makes the autosave visible — otherwise there's no way to tell the
+              draft survives a refresh. */}
+          <span className="text-xs text-slate-400 ml-auto" title="Your draft is saved in this browser and restored automatically">
+            {savedAt ? `Draft saved ${new Date(savedAt).toLocaleTimeString()}` : 'Draft autosaved'}
+          </span>
         </div>
       </div>
     </div>

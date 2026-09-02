@@ -1,1 +1,14 @@
 @import "tailwindcss";
+
+/* The in-app spell checker draws its own red squiggle in a layer behind each
+   textarea: the text there is transparent, so only the underline shows, sitting
+   exactly under the real word. text-decoration-skip-ink must stay off or
+   descenders punch gaps in the line. */
+.spell-error {
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #dc2626;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}

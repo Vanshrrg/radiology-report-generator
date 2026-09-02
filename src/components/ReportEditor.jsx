@@ -1,6 +1,7 @@
-import { forwardRef, useImperativeHandle, useEffect, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useEffect, useMemo, useRef, useState } from 'react';
 import { formatReport, exportReportDocx } from '../utils/reportUtils.js';
 import { HISTORY_STARTERS } from '../utils/historyStarters.js';
+import { loadDictionary, findMisspellings, misspellingAt, suggest } from '../utils/spellcheck.js';
 
 const MIN_HEIGHT = 44; // px, roughly one line + padding
 // Fields grow with their content up to MAX_HEIGHT, then scroll internally —
@@ -55,12 +56,28 @@ const ReportEditor = forwardRef(function ReportEditor(
     canRedo,
     signature,
     setSignature,
+    spellOn,
+    onToggleSpell,
+    extraWords,
+    onAddWord,
   },
   ref,
 ) {
   const [activeField, setActiveField] = useState('findings');
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef(null);
+  // Bumped once the word list has loaded, purely to re-run the memoised checks.
+  const [dictVersion, setDictVersion] = useState(0);
+  // The word the suggestion popover is open for:
+  // { field, start, end, word, top, left, options }.
+  const [popover, setPopover] = useState(null);
+  const overlayRefs = {
+    history: useRef(null),
+    technique: useRef(null),
+    comparison: useRef(null),
+    findings: useRef(null),
+    impression: useRef(null),
+  };
   const textareaRefs = {
     history: useRef(null),
     technique: useRef(null),
@@ -85,7 +102,119 @@ const ReportEditor = forwardRef(function ReportEditor(
     withScrollPreserved(() => {
       Object.values(textareaRefs).forEach(r => autoResize(r.current));
     });
+    // The textarea's scroll position is the authority: re-asserting it on every
+    // render stops the highlight layer drifting if anything ever scrolls it on
+    // its own (which would leave squiggles floating away from their words).
+    for (const key of Object.keys(overlayRefs)) {
+      const overlay = overlayRefs[key].current;
+      const textarea = textareaRefs[key].current;
+      if (overlay && textarea) overlay.scrollTop = textarea.scrollTop;
+    }
   }, [fields.history, fields.technique, fields.comparison, fields.findings, fields.impression]);
+
+  // The dictionary is a separate ~1.3 MB file fetched once and cached by the
+  // browser, so it costs nothing on later visits and never blocks the editor.
+  useEffect(() => {
+    if (!spellOn) return;
+    let alive = true;
+    loadDictionary().then(ok => {
+      if (alive && ok) setDictVersion(v => v + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [spellOn]);
+
+  // Checking is ours, not the browser's, so it covers template text, inserted
+  // phrases and restored drafts — none of which Chrome will look at.
+  const misspellings = useMemo(() => {
+    if (!spellOn) return { history: [], technique: [], comparison: [], findings: [], impression: [] };
+    const out = {};
+    for (const key of Object.keys(DEFAULT_VALUE)) {
+      out[key] = findMisspellings(fields[key] || '', extraWords);
+    }
+    return out;
+  }, [spellOn, dictVersion, extraWords, fields.history, fields.technique, fields.comparison, fields.findings, fields.impression]);
+
+  const issueCount = Object.values(misspellings).reduce((n, list) => n + list.length, 0);
+
+  useEffect(() => {
+    if (!popover) return;
+    const close = () => setPopover(null);
+    window.addEventListener('resize', close);
+    // Capture phase, so scrolling any ancestor closes it rather than leaving it
+    // stranded away from its word.
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [popover]);
+
+  // Clicking (or arrowing onto) a flagged word opens the suggestions for it.
+  // The popover is anchored to the word's own span in the highlight layer,
+  // which is exactly where the word is drawn.
+  const openSuggestions = key => {
+    if (!spellOn) return;
+    const el = textareaRefs[key].current;
+    if (!el) return;
+    const hit = misspellingAt(misspellings[key] || [], el.selectionStart ?? -1);
+    if (!hit) {
+      setPopover(null);
+      return;
+    }
+    const span = overlayRefs[key].current?.querySelector(`[data-sp="${hit.start}"]`);
+    const rect = span ? span.getBoundingClientRect() : el.getBoundingClientRect();
+    setPopover({
+      field: key,
+      start: hit.start,
+      end: hit.end,
+      word: hit.word,
+      top: rect.bottom + 4,
+      left: rect.left,
+      options: suggest(hit.word, extraWords),
+    });
+  };
+
+  const applySuggestion = choice => {
+    if (!popover) return;
+    const { field, start, end } = popover;
+    const current = fields[field] || '';
+    setFields(f => ({ ...f, [field]: current.slice(0, start) + choice + current.slice(end) }));
+    setPopover(null);
+    const el = textareaRefs[field].current;
+    if (!el) return;
+    const container = scrollRef.current;
+    const prevScrollTop = container?.scrollTop;
+    requestAnimationFrame(() => {
+      el.focus({ preventScroll: true });
+      const pos = start + choice.length;
+      el.setSelectionRange(pos, pos);
+      if (container && prevScrollTop != null) container.scrollTop = prevScrollTop;
+    });
+  };
+
+  // Renders the text once more behind the textarea, transparent apart from a
+  // red squiggle under each flagged word. Both layers share font, padding and
+  // wrapping, so the underlines land exactly under the real text.
+  const renderHighlights = (key, text, list) => {
+    const parts = [];
+    let cursor = 0;
+    for (const m of list) {
+      if (m.start > cursor) parts.push(text.slice(cursor, m.start));
+      parts.push(
+        <span key={m.start} data-sp={m.start} className="spell-error">
+          {text.slice(m.start, m.end)}
+        </span>,
+      );
+      cursor = m.end;
+    }
+    parts.push(text.slice(cursor));
+    // A trailing newline is collapsed by the browser unless something follows
+    // it, which would misalign the last line against the textarea.
+    parts.push('​');
+    return parts;
+  };
 
   const insertIntoField = (field, text, mode = 'inline') => {
     const el = textareaRefs[field].current;
@@ -252,25 +381,46 @@ const ReportEditor = forwardRef(function ReportEditor(
                 ))}
               </div>
             )}
-            {/* Chrome only shows red squiggles and its right-click spelling
-                suggestions when the field opts in explicitly; writingsuggestions
-                turns on Chrome's inline writing suggestions on top of that. */}
-            <textarea
-              ref={textareaRefs[key]}
-              className="border border-slate-300 rounded p-2 text-base md:text-sm resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-300"
-              style={{ height: MIN_HEIGHT }}
-              value={fields[key] || ''}
-              onFocus={() => setActiveField(key)}
-              onChange={e => {
-                setFields(f => ({ ...f, [key]: e.target.value }));
-                withScrollPreserved(() => autoResize(e.target));
-              }}
-              spellCheck={true}
-              writingsuggestions="true"
-              autoCorrect="on"
-              autoCapitalize="sentences"
-              lang="en-US"
-            />
+            {/* The highlight layer sits behind the textarea and draws the same
+                text transparently, so only its red squiggles show through. When
+                our checker is off we hand spelling back to the browser, which
+                only ever checks what you typed yourself. */}
+            <div className="relative">
+              {spellOn && (
+                <div
+                  ref={overlayRefs[key]}
+                  aria-hidden="true"
+                  className="absolute inset-0 overflow-hidden pointer-events-none rounded border border-transparent p-2 text-base md:text-sm text-transparent whitespace-pre-wrap break-words"
+                >
+                  {renderHighlights(key, fields[key] || '', misspellings[key] || [])}
+                </div>
+              )}
+              <textarea
+                ref={textareaRefs[key]}
+                className="relative block w-full bg-transparent border border-slate-300 rounded p-2 text-base md:text-sm resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-300"
+                style={{ height: MIN_HEIGHT }}
+                value={fields[key] || ''}
+                onFocus={() => setActiveField(key)}
+                onChange={e => {
+                  setFields(f => ({ ...f, [key]: e.target.value }));
+                  withScrollPreserved(() => autoResize(e.target));
+                  setPopover(null);
+                }}
+                onClick={() => openSuggestions(key)}
+                onKeyUp={e => {
+                  if (e.key.startsWith('Arrow')) openSuggestions(key);
+                }}
+                onScroll={e => {
+                  const overlay = overlayRefs[key].current;
+                  if (overlay) overlay.scrollTop = e.target.scrollTop;
+                }}
+                spellCheck={!spellOn}
+                writingsuggestions={spellOn ? 'false' : 'true'}
+                autoCorrect="on"
+                autoCapitalize="sentences"
+                lang="en-US"
+              />
+            </div>
           </div>
         ))}
 
@@ -340,6 +490,19 @@ const ReportEditor = forwardRef(function ReportEditor(
             Delete
           </button>
           <button
+            className={`text-sm font-medium px-3 py-2 rounded ${
+              spellOn ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-100'
+            }`}
+            onClick={onToggleSpell}
+            title={
+              spellOn
+                ? 'Spell check is on — click to turn it off and let the browser handle it'
+                : 'Spell check is off — click to turn it back on'
+            }
+          >
+            {spellOn ? `Spell check: on${issueCount ? ` (${issueCount})` : ''}` : 'Spell check: off'}
+          </button>
+          <button
             className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-sm font-medium px-3 py-2 rounded"
             onClick={onNewReport}
             title="Clear the report and start a new one (undoable)"
@@ -353,6 +516,42 @@ const ReportEditor = forwardRef(function ReportEditor(
           </span>
         </div>
       </div>
+
+      {popover && (
+        <>
+          {/* Click-away layer: dismisses without stealing the click's target. */}
+          <div className="fixed inset-0 z-40" onMouseDown={() => setPopover(null)} />
+          <div
+            className="fixed z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 min-w-44 max-w-[80vw]"
+            style={{ top: Math.min(popover.top, window.innerHeight - 220), left: Math.min(popover.left, window.innerWidth - 200) }}
+          >
+            <div className="px-3 py-1 text-[11px] text-slate-400 border-b border-slate-100">
+              “{popover.word}”
+            </div>
+            {popover.options.length === 0 && (
+              <div className="px-3 py-2 text-sm text-slate-400 italic">No suggestions</div>
+            )}
+            {popover.options.map(option => (
+              <button
+                key={option}
+                className="block w-full text-left px-3 py-1.5 text-sm text-slate-800 hover:bg-blue-50"
+                onClick={() => applySuggestion(option)}
+              >
+                {option}
+              </button>
+            ))}
+            <button
+              className="block w-full text-left px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 border-t border-slate-100"
+              onClick={() => {
+                onAddWord(popover.word);
+                setPopover(null);
+              }}
+            >
+              Add “{popover.word}” to dictionary
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 });

@@ -132,20 +132,28 @@ function countPhrases(phrases) {
 
 // Custom templates/phrases live in this browser's localStorage, so moving them
 // to another machine means writing them out to a file and reading it back in.
-export function exportUserData(userTemplates, userPhrases) {
+export function exportUserData(userTemplates, userPhrases, addedWords = []) {
   const templateCount = countTemplates(userTemplates);
   const phraseCount = countPhrases(userPhrases);
-  if (templateCount === 0 && phraseCount === 0) {
+  if (templateCount === 0 && phraseCount === 0 && addedWords.length === 0) {
     window.alert('Nothing to back up yet — you have no saved templates or phrases.');
     return;
   }
-  const payload = { version: 1, savedAt: new Date().toISOString(), templates: userTemplates, phrases: userPhrases };
+  const payload = {
+    version: 2,
+    savedAt: new Date().toISOString(),
+    templates: userTemplates,
+    phrases: userPhrases,
+    // Words taught to the spell checker travel with the templates — they're
+    // usually the house vocabulary those templates are written in.
+    words: addedWords,
+  };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const stamp = new Date().toISOString().slice(0, 10);
   downloadBlob(blob, `radiology-backup-${stamp}.json`);
 }
 
-export function importUserData(file, setUserTemplates, setUserPhrases) {
+export function importUserData(file, setUserTemplates, setUserPhrases, setAddedWords) {
   const reader = new FileReader();
   reader.onload = () => {
     let data;
@@ -155,12 +163,16 @@ export function importUserData(file, setUserTemplates, setUserPhrases) {
       window.alert("That file isn't valid backup data — it couldn't be read as JSON.");
       return;
     }
-    if (!data || (!data.templates && !data.phrases)) {
+    if (!data || (!data.templates && !data.phrases && !data.words)) {
       window.alert("That file doesn't look like a radiology backup — no templates or phrases found in it.");
       return;
     }
     if (data.templates) setUserTemplates(prev => mergeTemplates(prev, data.templates));
     if (data.phrases) setUserPhrases(prev => mergePhrases(prev, data.phrases));
+    // Version 1 backups predate the spell checker and simply have no words.
+    if (data.words?.length && setAddedWords) {
+      setAddedWords(prev => Array.from(new Set([...(prev || []), ...data.words])));
+    }
     window.alert(
       `Restored ${countTemplates(data.templates)} template(s) and ${countPhrases(data.phrases)} phrase(s). ` +
         'Anything already saved here was kept.',

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import LeftPanel from './components/LeftPanel.jsx';
 import ReportEditor from './components/ReportEditor.jsx';
 import RightPanel from './components/RightPanel.jsx';
@@ -6,6 +6,7 @@ import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
 import { exportUserData, importUserData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
 import { modalityLabel, regionLabel } from './utils/labels.js';
+import { collectUserWords } from './utils/spellcheck.js';
 
 function slugify(text) {
   return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -58,6 +59,24 @@ export default function App() {
   // The sign-off is per-user, not per-install — editable in the editor and kept
   // in this browser rather than hard-coded in the source.
   const [signature, setSignature] = useLocalStorage('radiology.signature', DEFAULT_SIGNATURE);
+  // The in-app spell checker, and the words this user has taught it. Kept on by
+  // default: the browser's own checker never looks at template text.
+  const [spellOn, setSpellOn] = useLocalStorage('radiology.spellcheck', true);
+  const [addedWords, setAddedWords] = useLocalStorage('radiology.userWords', []);
+
+  // Everything in the user's own templates and phrases counts as spelled
+  // correctly — it's the house vocabulary, and it's exactly what a general
+  // dictionary is missing.
+  const extraWords = useMemo(
+    () => collectUserWords(userTemplates, userPhrases, addedWords),
+    [userTemplates, userPhrases, addedWords],
+  );
+
+  const handleAddWord = word => {
+    const clean = String(word || '').trim().toLowerCase();
+    if (!clean) return;
+    setAddedWords(prev => (prev.includes(clean) ? prev : [...prev, clean]));
+  };
   const fieldsRef = useRef(fields);
   const patientInfoRef = useRef(patientInfo);
   const lastCheckpointRef = useRef(0);
@@ -398,7 +417,7 @@ export default function App() {
               and hidden on phones to keep the header uncluttered. */}
           <button
             className="hidden md:inline text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded"
-            onClick={() => exportUserData(userTemplates, userPhrases)}
+            onClick={() => exportUserData(userTemplates, userPhrases, addedWords)}
             title="Download your saved templates & phrases as a backup file"
           >
             Back up
@@ -417,7 +436,7 @@ export default function App() {
             className="hidden"
             onChange={e => {
               const file = e.target.files?.[0];
-              if (file) importUserData(file, setUserTemplates, setUserPhrases);
+              if (file) importUserData(file, setUserTemplates, setUserPhrases, setAddedWords);
               e.target.value = '';
             }}
           />
@@ -491,6 +510,10 @@ export default function App() {
           savedAt={savedAt}
           signature={signature}
           setSignature={setSignature}
+          spellOn={spellOn}
+          onToggleSpell={() => setSpellOn(on => !on)}
+          extraWords={extraWords}
+          onAddWord={handleAddWord}
         />
         <div className="hidden md:block h-full min-h-0">
           <RightPanel

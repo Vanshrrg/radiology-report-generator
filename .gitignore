@@ -6,3 +6,7 @@ dist/
 # Raw dictation exports contain real patient names/HN/dates (PHI) — never publish these.
 # Cleaned, genericized content lives in src/data/premadeData.js instead.
 Template/
+
+# Downloaded word-list sources for scripts/build-dictionary.cjs. The built
+# public/dictionary.txt IS committed, so builds never need the network.
+scripts/.dict-cache/

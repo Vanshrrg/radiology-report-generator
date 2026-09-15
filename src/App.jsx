@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import LeftPanel from './components/LeftPanel.jsx';
 import ReportEditor from './components/ReportEditor.jsx';
 import RightPanel from './components/RightPanel.jsx';
+import SyncModal from './components/SyncModal.jsx';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
-import { exportUserData, importUserData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
+import { exportUserData, importUserData, applyImportedData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
+import { saveToGist, loadFromGist } from './utils/gistSync.js';
 import { modalityLabel, regionLabel } from './utils/labels.js';
 import { collectUserWords } from './utils/spellcheck.js';
 
@@ -63,6 +65,14 @@ export default function App() {
   // default: the browser's own checker never looks at template text.
   const [spellOn, setSpellOn] = useLocalStorage('radiology.spellcheck', true);
   const [addedWords, setAddedWords] = useLocalStorage('radiology.userWords', []);
+  // GitHub Gist sync: token and gist id live only in this browser, same as
+  // everything else here — see SyncModal.
+  const [gistToken, setGistToken] = useLocalStorage('radiology.gistToken', '');
+  const [gistId, setGistId] = useLocalStorage('radiology.gistId', '');
+  const [autoSync, setAutoSync] = useLocalStorage('radiology.autoSync', false);
+  const [lastSyncedAt, setLastSyncedAt] = useLocalStorage('radiology.gistLastSyncedAt', '');
+  const [syncStatus, setSyncStatus] = useState(null); // 'syncing' | 'error' | null
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
 
   // Everything in the user's own templates and phrases counts as spelled
   // correctly — it's the house vocabulary, and it's exactly what a general
@@ -77,6 +87,75 @@ export default function App() {
     if (!clean) return;
     setAddedWords(prev => (prev.includes(clean) ? prev : [...prev, clean]));
   };
+
+  // Automatic gist sync: pull once on load, push (debounced) whenever the
+  // saved templates/phrases/words change, and pull periodically so changes
+  // made from another device show up here without a manual "Load from gist".
+  // A ref guards against the pull-on-load and the periodic pull each
+  // triggering their own push right back at the gist.
+  const skipNextAutoPushRef = useRef(false);
+  const autoPushTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!autoSync || !gistToken || !gistId) return;
+    let cancelled = false;
+    skipNextAutoPushRef.current = true;
+    loadFromGist({ token: gistToken, gistId })
+      .then(data => {
+        if (cancelled) return;
+        applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
+        setLastSyncedAt(new Date().toISOString());
+        setSyncStatus(null);
+      })
+      .catch(() => {
+        if (!cancelled) setSyncStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only meant to run when auto-sync is turned on/off or credentials change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, gistToken, gistId]);
+
+  useEffect(() => {
+    if (!autoSync || !gistToken) return;
+    if (skipNextAutoPushRef.current) {
+      skipNextAutoPushRef.current = false;
+      return;
+    }
+    if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    autoPushTimerRef.current = setTimeout(() => {
+      setSyncStatus('syncing');
+      saveToGist({ token: gistToken, gistId, userTemplates, userPhrases, addedWords })
+        .then(id => {
+          if (id !== gistId) setGistId(id);
+          setLastSyncedAt(new Date().toISOString());
+          setSyncStatus(null);
+        })
+        .catch(() => setSyncStatus('error'));
+    }, 3000);
+    return () => clearTimeout(autoPushTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, userTemplates, userPhrases, addedWords]);
+
+  // Periodic pull so a change saved from another device eventually appears
+  // here too, not just changes made locally.
+  useEffect(() => {
+    if (!autoSync || !gistToken || !gistId) return;
+    const interval = setInterval(() => {
+      skipNextAutoPushRef.current = true;
+      loadFromGist({ token: gistToken, gistId })
+        .then(data => {
+          applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
+          setLastSyncedAt(new Date().toISOString());
+          setSyncStatus(null);
+        })
+        .catch(() => setSyncStatus('error'));
+    }, 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, gistToken, gistId]);
+
   const fieldsRef = useRef(fields);
   const patientInfoRef = useRef(patientInfo);
   const lastCheckpointRef = useRef(0);
@@ -429,6 +508,21 @@ export default function App() {
           >
             Restore
           </button>
+          <button
+            className="hidden md:inline text-slate-400 hover:text-white hover:bg-slate-800 px-2 py-1 rounded relative"
+            onClick={() => setSyncModalOpen(true)}
+            title="Sync your saved templates & phrases across devices via a GitHub Gist"
+          >
+            Sync
+            {autoSync && (
+              <span
+                className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
+                  syncStatus === 'error' ? 'bg-red-500' : syncStatus === 'syncing' ? 'bg-amber-400' : 'bg-green-400'
+                }`}
+                title={syncStatus === 'error' ? 'Last sync failed' : syncStatus === 'syncing' ? 'Syncing…' : 'Auto-sync on'}
+              />
+            )}
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -537,6 +631,25 @@ export default function App() {
         >
           {toast}
         </div>
+      )}
+
+      {syncModalOpen && (
+        <SyncModal
+          onClose={() => setSyncModalOpen(false)}
+          token={gistToken}
+          setToken={setGistToken}
+          gistId={gistId}
+          setGistId={setGistId}
+          autoSync={autoSync}
+          setAutoSync={setAutoSync}
+          lastSyncedAt={lastSyncedAt}
+          userTemplates={userTemplates}
+          userPhrases={userPhrases}
+          addedWords={addedWords}
+          setUserTemplates={setUserTemplates}
+          setUserPhrases={setUserPhrases}
+          setAddedWords={setAddedWords}
+        />
       )}
 
       {/* Phone drawers: templates (left) & phrases (right) slide over the

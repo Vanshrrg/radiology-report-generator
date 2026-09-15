@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { saveToGist, loadFromGist } from '../utils/gistSync.js';
-import { applyImportedData } from '../utils/reportUtils.js';
+import { mergeTemplates, mergePhrases } from '../utils/reportUtils.js';
 
 // Lets the user push/pull their saved templates & phrases to a private
 // GitHub Gist so the same set shows up on another device. The token and
@@ -25,27 +25,48 @@ export default function SyncModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
 
-  const handleSave = async () => {
+  // One button, two-way: pull whatever's already in the gist, merge it with
+  // what's here (computed directly rather than via React state, so the push
+  // right after doesn't race a state update that hasn't landed yet), apply
+  // that merge locally, then push the combined result back up. On the very
+  // first run, with no gist yet, the pull is skipped.
+  const handleSync = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      const id = await saveToGist({ token, gistId, userTemplates, userPhrases, addedWords });
+      let mergedTemplates = userTemplates;
+      let mergedPhrases = userPhrases;
+      let mergedWords = addedWords;
+      let pulledTemplateCount = 0;
+      let pulledPhraseCount = 0;
+      if (gistId) {
+        const data = await loadFromGist({ token, gistId });
+        if (data.templates) mergedTemplates = mergeTemplates(userTemplates, data.templates);
+        if (data.phrases) mergedPhrases = mergePhrases(userPhrases, data.phrases);
+        if (data.words?.length) mergedWords = Array.from(new Set([...(addedWords || []), ...data.words]));
+        pulledTemplateCount = Object.values(data.templates || {}).reduce(
+          (n, regions) => n + Object.values(regions || {}).reduce((m, named) => m + Object.keys(named || {}).length, 0),
+          0,
+        );
+        pulledPhraseCount = Object.values(data.phrases || {}).reduce((n, list) => n + (list?.length || 0), 0);
+        setUserTemplates(mergedTemplates);
+        setUserPhrases(mergedPhrases);
+        setAddedWords(mergedWords);
+      }
+      const id = await saveToGist({
+        token,
+        gistId,
+        userTemplates: mergedTemplates,
+        userPhrases: mergedPhrases,
+        addedWords: mergedWords,
+      });
       setGistId(id);
-      setMessage({ type: 'ok', text: `Saved to gist ${id}.` });
-    } catch (err) {
-      setMessage({ type: 'error', text: err.message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleLoad = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const data = await loadFromGist({ token, gistId });
-      const { templateCount, phraseCount } = applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
-      setMessage({ type: 'ok', text: `Loaded ${templateCount} template(s) and ${phraseCount} phrase(s). Anything already saved here was kept.` });
+      setMessage({
+        type: 'ok',
+        text: gistId
+          ? `Synced with gist ${id} — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s) from it.`
+          : `Created gist ${id} and saved to it.`,
+      });
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
     } finally {
@@ -65,8 +86,9 @@ export default function SyncModal({
         </div>
 
         <p className="text-xs text-slate-500 mb-3">
-          Save your templates & phrases to a private GitHub Gist, then load them on another
-          device with the same token and Gist ID. Needs a{' '}
+          Syncs your templates & phrases with a private GitHub Gist — merging in whatever's
+          already there, then saving the combined set back. Use the same token and Gist ID on
+          another device to sync it too. Needs a{' '}
           <a
             className="underline"
             href="https://github.com/settings/tokens/new?description=Radiology%20Report%20Generator%20sync&scopes=gist"
@@ -103,22 +125,13 @@ export default function SyncModal({
           </div>
         )}
 
-        <div className="flex gap-2 mb-4">
-          <button
-            className="flex-1 bg-slate-800 text-white text-sm rounded px-3 py-2 disabled:opacity-50"
-            onClick={handleSave}
-            disabled={busy}
-          >
-            {busy ? 'Working…' : 'Save to gist'}
-          </button>
-          <button
-            className="flex-1 border border-slate-300 text-sm rounded px-3 py-2 disabled:opacity-50"
-            onClick={handleLoad}
-            disabled={busy}
-          >
-            {busy ? 'Working…' : 'Load from gist'}
-          </button>
-        </div>
+        <button
+          className="w-full bg-slate-800 text-white text-sm rounded px-3 py-2 disabled:opacity-50 mb-4"
+          onClick={handleSync}
+          disabled={busy}
+        >
+          {busy ? 'Syncing…' : 'Sync now'}
+        </button>
 
         <div className="border-t pt-3">
           <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -132,7 +145,7 @@ export default function SyncModal({
           </label>
           <p className="text-xs text-slate-500 mt-1">
             {!token || !gistId
-              ? 'Save to (or load from) a gist at least once first, so there\'s a token and Gist ID to sync with.'
+              ? 'Click "Sync now" at least once first, so there\'s a token and Gist ID to sync with.'
               : 'Pulls from the gist when this tab opens and every minute after, and pushes changes about 3 seconds after you make them.'}
           </p>
           {autoSync && lastSyncedAt && (

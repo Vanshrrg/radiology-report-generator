@@ -192,7 +192,7 @@ export function importUserData(file, setUserTemplates, setUserPhrases, setAddedW
 }
 
 // Imported entries win on a name clash; everything already saved is preserved.
-function mergeTemplates(target, source) {
+export function mergeTemplates(target, source) {
   const result = structuredClone(target || {});
   for (const [modality, regions] of Object.entries(source)) {
     result[modality] = result[modality] || {};
@@ -203,7 +203,7 @@ function mergeTemplates(target, source) {
   return result;
 }
 
-function mergePhrases(target, source) {
+export function mergePhrases(target, source) {
   const result = { ...(target || {}) };
   for (const [key, list] of Object.entries(source)) {
     result[key] = Array.from(new Set([...(result[key] || []), ...(list || [])]));

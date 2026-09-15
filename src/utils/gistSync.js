@@ -34,6 +34,17 @@ async function githubRequest(url, token, options = {}) {
   return res.json();
 }
 
+// Finds this token's own sync gist by filename, so a second device only
+// needs the same token typed in — no Gist ID to copy around. Looks at the
+// most recently updated 100 gists, which comfortably covers a personal
+// account's history.
+export async function findOwnGist(token) {
+  if (!token) return null;
+  const gists = await githubRequest('https://api.github.com/gists?per_page=100', token);
+  const match = gists.find(g => g.files && GIST_FILENAME in g.files);
+  return match ? match.id : null;
+}
+
 // Creates the gist on first save (when gistId is blank) and returns its id,
 // otherwise updates the existing one in place.
 export async function saveToGist({ token, gistId, userTemplates, userPhrases, addedWords }) {

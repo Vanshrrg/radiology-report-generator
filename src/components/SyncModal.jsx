@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { saveToGist, loadFromGist } from '../utils/gistSync.js';
+import { saveToGist, loadFromGist, findOwnGist } from '../utils/gistSync.js';
 import { mergeTemplates, mergePhrases } from '../utils/reportUtils.js';
 
 // Lets the user push/pull their saved templates & phrases to a private
@@ -25,22 +25,28 @@ export default function SyncModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // One button, two-way: pull whatever's already in the gist, merge it with
-  // what's here (computed directly rather than via React state, so the push
-  // right after doesn't race a state update that hasn't landed yet), apply
-  // that merge locally, then push the combined result back up. On the very
-  // first run, with no gist yet, the pull is skipped.
+  // One button, two-way: find this token's own sync gist (so a second device
+  // needs only the same token, not a copied ID), pull whatever's already in
+  // it, merge with what's here (computed directly rather than via React
+  // state, so the push right after doesn't race a state update that hasn't
+  // landed yet), apply that merge locally, then push the combined result
+  // back up. On the very first run anywhere, with no gist yet, one gets created.
   const handleSync = async () => {
     setBusy(true);
     setMessage(null);
     try {
+      let currentGistId = gistId;
+      if (!currentGistId) {
+        currentGistId = await findOwnGist(token);
+        if (currentGistId) setGistId(currentGistId);
+      }
       let mergedTemplates = userTemplates;
       let mergedPhrases = userPhrases;
       let mergedWords = addedWords;
       let pulledTemplateCount = 0;
       let pulledPhraseCount = 0;
-      if (gistId) {
-        const data = await loadFromGist({ token, gistId });
+      if (currentGistId) {
+        const data = await loadFromGist({ token, gistId: currentGistId });
         if (data.templates) mergedTemplates = mergeTemplates(userTemplates, data.templates);
         if (data.phrases) mergedPhrases = mergePhrases(userPhrases, data.phrases);
         if (data.words?.length) mergedWords = Array.from(new Set([...(addedWords || []), ...data.words]));
@@ -55,7 +61,7 @@ export default function SyncModal({
       }
       const id = await saveToGist({
         token,
-        gistId,
+        gistId: currentGistId,
         userTemplates: mergedTemplates,
         userPhrases: mergedPhrases,
         addedWords: mergedWords,
@@ -67,9 +73,9 @@ export default function SyncModal({
       setAutoSync(true);
       setMessage({
         type: 'ok',
-        text: gistId
-          ? `Synced with gist ${id} — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s) from it. Auto-sync is now on.`
-          : `Created gist ${id} and saved to it. Auto-sync is now on.`,
+        text: currentGistId
+          ? `Synced — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s). Auto-sync is now on.`
+          : `First sync on this account — saved your templates & phrases. Auto-sync is now on.`,
       });
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -91,8 +97,8 @@ export default function SyncModal({
 
         <p className="text-xs text-slate-500 mb-3">
           Syncs your templates & phrases with a private GitHub Gist — merging in whatever's
-          already there, then saving the combined set back. Use the same token and Gist ID on
-          another device to sync it too. Needs a{' '}
+          already there, then saving the combined set back. Enter the same token on another
+          device to sync it too — it finds your existing gist automatically. Needs a{' '}
           <a
             className="underline"
             href="https://github.com/settings/tokens/new?description=Radiology%20Report%20Generator%20sync&scopes=gist"
@@ -107,20 +113,11 @@ export default function SyncModal({
         <label className="block text-xs font-medium text-slate-600 mb-1">GitHub token</label>
         <input
           type="password"
-          className="w-full border rounded px-2 py-1.5 text-sm mb-3"
+          className="w-full border rounded px-2 py-1.5 text-sm mb-4"
           value={token}
           onChange={e => setToken(e.target.value)}
           placeholder="ghp_..."
           autoComplete="off"
-        />
-
-        <label className="block text-xs font-medium text-slate-600 mb-1">Gist ID (leave blank to create one)</label>
-        <input
-          type="text"
-          className="w-full border rounded px-2 py-1.5 text-sm mb-4"
-          value={gistId}
-          onChange={e => setGistId(e.target.value)}
-          placeholder="e.g. 8f3a9c2b1d4e5f6a7b8c9d0e1f2a3b4c"
         />
 
         {message && (

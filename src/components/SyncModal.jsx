@@ -61,11 +61,15 @@ export default function SyncModal({
         addedWords: mergedWords,
       });
       setGistId(id);
+      // Once a sync has succeeded there's a token and gist to keep syncing
+      // with, so background auto-sync switches on right away — no separate
+      // toggle to remember.
+      setAutoSync(true);
       setMessage({
         type: 'ok',
         text: gistId
-          ? `Synced with gist ${id} — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s) from it.`
-          : `Created gist ${id} and saved to it.`,
+          ? `Synced with gist ${id} — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s) from it. Auto-sync is now on.`
+          : `Created gist ${id} and saved to it. Auto-sync is now on.`,
       });
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -134,19 +138,10 @@ export default function SyncModal({
         </button>
 
         <div className="border-t pt-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={autoSync}
-              onChange={e => setAutoSync(e.target.checked)}
-              disabled={!token || !gistId}
-            />
-            Sync automatically in the background
-          </label>
-          <p className="text-xs text-slate-500 mt-1">
-            {!token || !gistId
-              ? 'Click "Sync now" at least once first, so there\'s a token and Gist ID to sync with.'
-              : 'Pulls from the gist when this tab opens and every minute after, and pushes changes about 3 seconds after you make them.'}
+          <p className="text-xs text-slate-500">
+            {autoSync
+              ? 'Auto-sync is on: pulls from the gist when this tab opens and every minute after, and pushes changes about 3 seconds after you make them.'
+              : 'After the first "Sync now", this device keeps syncing in the background automatically.'}
           </p>
           {autoSync && lastSyncedAt && (
             <p className="text-xs text-slate-400 mt-1">Last synced {new Date(lastSyncedAt).toLocaleString()}</p>

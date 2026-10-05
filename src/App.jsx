@@ -142,19 +142,32 @@ export default function App() {
   const redoStack = activeTab.redo || [];
 
   // These setters keep the same value-or-updater shape as useState, but write
-  // into the active tab. Only real content changes bump updatedAt — that's
-  // what sync compares to decide which device's copy is newer.
+  // into the active tab. Each changed field gets its own timestamp in
+  // fieldTimes — sync merges field by field on those, so edits to different
+  // fields on two devices both survive. Undo/redo history changes aren't
+  // content and don't touch them.
   const updateActiveTab = fn => {
     const id = activeIdRef.current;
     setTabs(ts => ts.map(t => (t.id === id ? fn(t) : t)));
   };
-  const setFieldsRaw = u =>
-    updateActiveTab(t => ({ ...t, fields: resolve(u, t.fields), updatedAt: new Date().toISOString() }));
-  const setPatientInfoRaw = u =>
-    updateActiveTab(t => ({ ...t, patientInfo: resolve(u, t.patientInfo), updatedAt: new Date().toISOString() }));
+  const stampChanges = (t, key, next) => {
+    const prev = t[key] || {};
+    if (next === prev) return t;
+    const now = new Date().toISOString();
+    const fieldTimes = { ...t.fieldTimes };
+    for (const k of Object.keys(next)) if (next[k] !== prev[k]) fieldTimes[k] = now;
+    return { ...t, [key]: next, fieldTimes, updatedAt: now };
+  };
+  const setFieldsRaw = u => updateActiveTab(t => stampChanges(t, 'fields', resolve(u, t.fields)));
+  const setPatientInfoRaw = u => updateActiveTab(t => stampChanges(t, 'patientInfo', resolve(u, t.patientInfo)));
   const setHistory = u => updateActiveTab(t => ({ ...t, history: resolve(u, t.history || []) }));
   const setRedoStack = u => updateActiveTab(t => ({ ...t, redo: resolve(u, t.redo || []) }));
-  const setSelected = u => updateActiveTab(t => ({ ...t, selected: resolve(u, t.selected || null) }));
+  const setSelected = u =>
+    updateActiveTab(t => {
+      const next = resolve(u, t.selected || null);
+      if (JSON.stringify(next) === JSON.stringify(t.selected || null)) return t;
+      return { ...t, selected: next, fieldTimes: { ...t.fieldTimes, selected: new Date().toISOString() } };
+    });
   // The sign-off is per-user, not per-install — editable in the editor and kept
   // in this browser rather than hard-coded in the source.
   const [signature, setSignature] = useLocalStorage('radiology.signature', DEFAULT_SIGNATURE);
@@ -185,13 +198,21 @@ export default function App() {
     setAddedWords(prev => (prev.includes(clean) ? prev : [...prev, clean]));
   };
 
-  // Automatic gist sync: pull once on load, push (debounced) whenever the
-  // saved templates/phrases/words change, and pull periodically so changes
-  // made from another device show up here without a manual "Load from gist".
-  // A ref guards against the pull-on-load and the periodic pull each
-  // triggering their own push right back at the gist.
+  // Automatic gist sync, near-live: push about a second after any change, and
+  // check the gist every few seconds while this window is visible (and
+  // straight away on coming back to it) so another device's edits show up
+  // here quickly. Checks send the last ETag, so "nothing changed" is a 304
+  // that GitHub doesn't count against the token's rate limit.
+  // A ref guards against a pull's own changes being pushed straight back at
+  // the gist — two devices would otherwise bounce the same data forever.
   const skipNextAutoPushRef = useRef(false);
   const autoPushTimerRef = useRef(null);
+  // Last local change and last push, so a pull that lands while a local edit
+  // is still waiting to go up doesn't swallow that push.
+  const localChangeAtRef = useRef(0);
+  const lastPushAtRef = useRef(0);
+  const etagRef = useRef(null);
+  const pullingRef = useRef(false);
 
   // Open tabs ride along in the same gist. The payload leaves out undo history,
   // and its JSON is the push trigger — so moving through undo, or switching
@@ -208,23 +229,44 @@ export default function App() {
     setClosedTabs(merged.closedTabs);
   };
 
-  useEffect(() => {
-    if (!autoSync || !gistToken || !gistId) return;
-    let cancelled = false;
-    skipNextAutoPushRef.current = true;
-    loadFromGist({ token: gistToken, gistId })
+  const pullFromGist = () => {
+    if (pullingRef.current) return;
+    pullingRef.current = true;
+    loadFromGist({ token: gistToken, gistId, etag: etagRef.current })
       .then(data => {
-        if (cancelled) return;
+        setSyncStatus(null);
+        if (!data) return; // unchanged since the last check
+        etagRef.current = data.etag;
+        // Don't echo what was just pulled back up — unless a local change is
+        // still waiting to go up, which the merged state now carries.
+        skipNextAutoPushRef.current = localChangeAtRef.current <= lastPushAtRef.current;
         applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
         applyRemoteTabs(data.openTabs);
         setLastSyncedAt(new Date().toISOString());
-        setSyncStatus(null);
       })
-      .catch(() => {
-        if (!cancelled) setSyncStatus('error');
+      .catch(() => setSyncStatus('error'))
+      .finally(() => {
+        pullingRef.current = false;
       });
+  };
+  const pullFromGistRef = useRef(pullFromGist);
+  pullFromGistRef.current = pullFromGist;
+
+  useEffect(() => {
+    if (!autoSync || !gistToken || !gistId) return;
+    etagRef.current = null;
+    skipNextAutoPushRef.current = true;
+    pullFromGistRef.current();
+    const pullIfVisible = () => {
+      if (!document.hidden) pullFromGistRef.current();
+    };
+    const interval = setInterval(pullIfVisible, 5000);
+    window.addEventListener('focus', pullIfVisible);
+    document.addEventListener('visibilitychange', pullIfVisible);
     return () => {
-      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener('focus', pullIfVisible);
+      document.removeEventListener('visibilitychange', pullIfVisible);
     };
     // Only meant to run when auto-sync is turned on/off or credentials change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -236,9 +278,11 @@ export default function App() {
       skipNextAutoPushRef.current = false;
       return;
     }
+    localChangeAtRef.current = Date.now();
     if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
     autoPushTimerRef.current = setTimeout(() => {
       setSyncStatus('syncing');
+      lastPushAtRef.current = Date.now();
       saveToGist({
         token: gistToken,
         gistId,
@@ -252,30 +296,15 @@ export default function App() {
           setLastSyncedAt(new Date().toISOString());
           setSyncStatus(null);
         })
-        .catch(() => setSyncStatus('error'));
-    }, 3000);
+        .catch(() => {
+          // Still unsent — keep it pending so the next pull doesn't skip it.
+          lastPushAtRef.current = 0;
+          setSyncStatus('error');
+        });
+    }, 1000);
     return () => clearTimeout(autoPushTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSync, userTemplates, userPhrases, addedWords, openTabsJson]);
-
-  // Periodic pull so a change saved from another device eventually appears
-  // here too, not just changes made locally.
-  useEffect(() => {
-    if (!autoSync || !gistToken || !gistId) return;
-    const interval = setInterval(() => {
-      skipNextAutoPushRef.current = true;
-      loadFromGist({ token: gistToken, gistId })
-        .then(data => {
-          applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
-          applyRemoteTabs(data.openTabs);
-          setLastSyncedAt(new Date().toISOString());
-          setSyncStatus(null);
-        })
-        .catch(() => setSyncStatus('error'));
-    }, 60000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSync, gistToken, gistId]);
 
   const fieldsRef = useRef(fields);
   const patientInfoRef = useRef(patientInfo);

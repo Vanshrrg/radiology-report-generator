@@ -148,7 +148,7 @@ export default function SyncModal({
         <div className="border-t pt-3">
           <p className="text-xs text-slate-500">
             {autoSync
-              ? 'Auto-sync is on: pulls from the gist when this tab opens and every minute after, and pushes changes about 3 seconds after you make them.'
+              ? "Auto-sync is on: changes go up about a second after you make them, and this device checks for changes from your other devices every few seconds while it's open. Different fields edited on two devices are merged; the same field edited on both keeps the latest edit."
               : 'After the first "Sync now", this device keeps syncing in the background automatically.'}
           </p>
           {autoSync && lastSyncedAt && (

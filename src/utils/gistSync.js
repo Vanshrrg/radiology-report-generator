@@ -30,13 +30,15 @@ async function githubRequest(url, token, options = {}) {
       ...(options.headers || {}),
     },
   });
-  if (!res.ok) {
-    if (res.status === 401) throw new Error('GitHub rejected that token — check it has the "gist" scope and hasn\'t expired.');
-    if (res.status === 404) throw new Error("Gist not found — check the Gist ID, or leave it blank to create a new one.");
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.message || `GitHub request failed (${res.status}).`);
-  }
+  if (!res.ok) await throwGithubError(res);
   return res.json();
+}
+
+async function throwGithubError(res) {
+  if (res.status === 401) throw new Error('GitHub rejected that token — check it has the "gist" scope and hasn\'t expired.');
+  if (res.status === 404) throw new Error("Gist not found — check the Gist ID, or leave it blank to create a new one.");
+  const body = await res.json().catch(() => null);
+  throw new Error(body?.message || `GitHub request failed (${res.status}).`);
 }
 
 async function fileContent(file) {
@@ -88,11 +90,28 @@ export async function saveToGist({ token, gistId, userTemplates, userPhrases, ad
 }
 
 // Returns the templates/phrases/words payload, plus `openTabs` ({tabs, closed})
-// when the gist has a tabs file.
-export async function loadFromGist({ token, gistId }) {
+// when the gist has a tabs file, and the response's `etag`.
+// Pass the previous `etag` to poll cheaply: if nothing changed GitHub answers
+// 304, which doesn't count against the token's rate limit, and this returns
+// null. That's what makes checking every few seconds affordable.
+export async function loadFromGist({ token, gistId, etag }) {
   if (!token) throw new Error('Enter your GitHub personal access token first.');
   if (!gistId) throw new Error('Enter the Gist ID to load from.');
-  const gist = await githubRequest(`https://api.github.com/gists/${gistId}`, token);
+  // Fetched by hand rather than through githubRequest, which would treat a
+  // 304 as an error. no-store keeps the browser's own cache (GitHub sends
+  // max-age=60) from answering with a stale copy.
+  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    cache: 'no-store',
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github+json',
+      ...(etag ? { 'If-None-Match': etag } : {}),
+    },
+  });
+  if (res.status === 304) return null;
+  if (!res.ok) await throwGithubError(res);
+  const newEtag = res.headers.get('ETag');
+  const gist = await res.json();
   const file = gist.files?.[GIST_FILENAME] ?? Object.values(gist.files || {})[0];
   if (!file) throw new Error('That gist has no sync data in it.');
   const content = await fileContent(file);
@@ -114,6 +133,7 @@ export async function loadFromGist({ token, gistId }) {
       // A damaged tabs file shouldn't stop templates/phrases from syncing.
     }
   }
+  data.etag = newEtag;
   return data;
 }
 
@@ -122,11 +142,12 @@ export async function loadFromGist({ token, gistId }) {
 // go up only as tombstones, so other devices close them too.
 export function openTabsPayload(tabs, closedTabs) {
   return {
-    tabs: tabs.map(({ id, patientInfo, fields, selected, createdAt, updatedAt }) => ({
+    tabs: tabs.map(({ id, patientInfo, fields, selected, fieldTimes, createdAt, updatedAt }) => ({
       id,
       patientInfo,
       fields,
       selected: selected || null,
+      fieldTimes: fieldTimes || {},
       createdAt,
       updatedAt,
     })),
@@ -134,9 +155,41 @@ export function openTabsPayload(tabs, closedTabs) {
   };
 }
 
+const REPORT_FIELDS = ['history', 'technique', 'comparison', 'findings', 'impression'];
+const PATIENT_FIELDS = ['name', 'studyType'];
+
+// When this field of the tab was last changed. Tabs saved before per-field
+// times existed fall back to the whole tab's last edit.
+const fieldTime = (tab, key) => tab.fieldTimes?.[key] || tab.updatedAt || '';
+
+// Same report open on two devices: each field is taken from whichever side
+// changed it last, so Findings typed on one device and Impression on another
+// both survive. Returns `local` itself when the remote copy adds nothing new.
+function mergeTab(local, remote) {
+  let changed = false;
+  const fields = { ...local.fields };
+  const patientInfo = { ...local.patientInfo };
+  const fieldTimes = { ...local.fieldTimes };
+  let selected = local.selected || null;
+  const take = (key, apply) => {
+    const remoteTime = fieldTime(remote, key);
+    if (remoteTime > fieldTime(local, key)) {
+      apply();
+      fieldTimes[key] = remoteTime;
+      changed = true;
+    }
+  };
+  for (const key of REPORT_FIELDS) take(key, () => (fields[key] = remote.fields?.[key] ?? ''));
+  for (const key of PATIENT_FIELDS) take(key, () => (patientInfo[key] = remote.patientInfo?.[key] ?? ''));
+  take('selected', () => (selected = remote.selected || null));
+  if (!changed) return local;
+  const updatedAt = [local.updatedAt || '', remote.updatedAt || ''].sort().pop();
+  return { ...local, fields, patientInfo, selected, fieldTimes, updatedAt };
+}
+
 // Merges open tabs pulled from the gist into this device's. Same tab on both
-// sides: whichever was edited last wins (this device's undo history is kept
-// either way). A tab closed anywhere after its last edit stays closed. Remote
+// sides: merged field by field, newest edit of each field wins (this device's
+// undo history is kept either way). A tab closed anywhere after its last edit stays closed. Remote
 // tombstones join the local closed list so they keep propagating; a tab this
 // device had open keeps its full copy there, so it can still be reopened here.
 export function mergeOpenTabs(localTabs, localClosed, remote) {
@@ -155,8 +208,8 @@ export function mergeOpenTabs(localTabs, localClosed, remote) {
     if (!local) {
       byId.set(r.id, { history: [], redo: [], ...r });
       order.push(r.id);
-    } else if ((r.updatedAt || '') > (local.updatedAt || '')) {
-      byId.set(r.id, { ...local, patientInfo: r.patientInfo, fields: r.fields, selected: r.selected, updatedAt: r.updatedAt });
+    } else {
+      byId.set(r.id, mergeTab(local, r));
     }
   }
   const tabs = order.map(id => byId.get(id)).filter(t => !isClosed(t));

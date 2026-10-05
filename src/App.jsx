@@ -6,8 +6,9 @@ import SyncModal from './components/SyncModal.jsx';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
 import { exportUserData, importUserData, applyImportedData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
-import { saveToGist, loadFromGist } from './utils/gistSync.js';
-import { modalityLabel, regionLabel } from './utils/labels.js';
+import ReportTabs from './components/ReportTabs.jsx';
+import { saveToGist, loadFromGist, mergeOpenTabs, openTabsPayload, MAX_CLOSED } from './utils/gistSync.js';
+import { modalityLabel, regionLabel, tabLabel } from './utils/labels.js';
 import { collectUserWords } from './utils/spellcheck.js';
 
 function slugify(text) {
@@ -34,30 +35,126 @@ function findExistingRegionKey(input, templates, modalityKey) {
 }
 
 const EMPTY_FIELDS = { history: '', technique: '', comparison: 'None.', findings: '', impression: '' };
+const EMPTY_PATIENT = { name: '', studyType: '' };
+
+const resolve = (updater, prev) => (typeof updater === 'function' ? updater(prev) : updater);
+
+// Not crypto.randomUUID — that's missing on plain-http LAN addresses, which is
+// how the app gets opened on a phone during development.
+const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+function makeTab(init = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: newId(),
+    patientInfo: EMPTY_PATIENT,
+    fields: EMPTY_FIELDS,
+    selected: null,
+    history: [],
+    redo: [],
+    createdAt: now,
+    updatedAt: now,
+    ...init,
+  };
+}
+
+// A blank tab with nothing typed in it isn't worth keeping in "recently closed".
+function tabHasContent(tab) {
+  const f = tab.fields || {};
+  return Boolean(
+    tab.patientInfo?.name?.trim() ||
+      tab.patientInfo?.studyType?.trim() ||
+      ['history', 'technique', 'findings', 'impression'].some(k => f[k]?.trim()) ||
+      (f.comparison && f.comparison !== EMPTY_FIELDS.comparison),
+  );
+}
+
+// Before tabs there was one draft under these keys; it becomes the first tab.
+const LEGACY_DRAFT_KEYS = [
+  'radiology.draft.patientInfo',
+  'radiology.draft.fields',
+  'radiology.draft.history',
+  'radiology.draft.redo',
+];
+
+function loadLegacyDraft() {
+  const read = key => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw !== null ? JSON.parse(raw) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const [patientInfo, fields, history, redo] = LEGACY_DRAFT_KEYS.map(read);
+  return makeTab({
+    patientInfo: patientInfo || EMPTY_PATIENT,
+    fields: fields || EMPTY_FIELDS,
+    history: history || [],
+    redo: redo || [],
+  });
+}
 
 export default function App() {
   const [userTemplates, setUserTemplates] = useLocalStorage('radiology.userTemplates', {});
   const [userPhrases, setUserPhrases] = useLocalStorage('radiology.userPhrases', {});
 
-  // Draft autosave: the report being typed is kept in localStorage, not just
-  // in React state, so an accidental refresh, tab close, browser crash or power
-  // cut brings the text back instead of losing it. useLocalStorage writes on
-  // every change, so at most the last keystroke is ever at risk.
-  const [patientInfo, setPatientInfoRaw] = useLocalStorage('radiology.draft.patientInfo', {
-    name: '',
-    studyType: '',
-  });
-  const [fields, setFieldsRaw] = useLocalStorage('radiology.draft.fields', EMPTY_FIELDS);
-  const [selected, setSelected] = useState(null);
+  // Report tabs: every unfinished report is its own tab, each holding its own
+  // draft, loaded template and undo/redo history. All of it is kept in
+  // localStorage, not just React state, so an accidental refresh, browser
+  // crash or power cut brings every open report back. useLocalStorage writes
+  // on every change, so at most the last keystroke is ever at risk.
+  // The first load after this was added carries the old single draft over.
+  const [firstTab] = useState(loadLegacyDraft);
+  const [tabs, setTabs] = useLocalStorage('radiology.tabs', [firstTab]);
+  const [activeTabId, setActiveTabId] = useLocalStorage('radiology.activeTabId', firstTab.id);
+  // Closed tabs, newest first, so an accidental close can be undone. They also
+  // travel to the gist as tombstones so a tab closed on one device closes on
+  // the others.
+  const [closedTabs, setClosedTabs] = useLocalStorage('radiology.closedTabs', []);
+  useEffect(() => {
+    for (const key of LEGACY_DRAFT_KEYS) localStorage.removeItem(key);
+  }, []);
+
+  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || firstTab;
+  const activeIdRef = useRef(activeTab.id);
+  activeIdRef.current = activeTab.id;
+  // Never leave zero tabs or point at one that's gone (e.g. closed by a sync).
+  useEffect(() => {
+    if (!tabs.length) {
+      const tab = makeTab();
+      setTabs([tab]);
+      setActiveTabId(tab.id);
+    } else if (!tabs.some(t => t.id === activeTabId)) {
+      setActiveTabId(tabs[0].id);
+    }
+  }, [tabs, activeTabId]);
+
+  const { patientInfo, fields } = activeTab;
+  const selected = activeTab.selected || null;
   // Undo history: a stack of {fields, patientInfo} snapshots taken before each
   // change, so Ctrl+Z / the Undo button can step back through edits, template
   // loads, and clears alike. Checkpoints are debounced so a burst of typing
-  // becomes one undo step instead of one per keystroke.
-  // Persisted alongside the draft so undo still works after a reload.
-  const [history, setHistory] = useLocalStorage('radiology.draft.history', []);
+  // becomes one undo step instead of one per keystroke. Kept per tab.
+  const history = activeTab.history || [];
   // Redo is the other half of undo: without it, one Ctrl+Z too many loses text
   // with no way back. Any fresh edit invalidates it, as usual.
-  const [redoStack, setRedoStack] = useLocalStorage('radiology.draft.redo', []);
+  const redoStack = activeTab.redo || [];
+
+  // These setters keep the same value-or-updater shape as useState, but write
+  // into the active tab. Only real content changes bump updatedAt — that's
+  // what sync compares to decide which device's copy is newer.
+  const updateActiveTab = fn => {
+    const id = activeIdRef.current;
+    setTabs(ts => ts.map(t => (t.id === id ? fn(t) : t)));
+  };
+  const setFieldsRaw = u =>
+    updateActiveTab(t => ({ ...t, fields: resolve(u, t.fields), updatedAt: new Date().toISOString() }));
+  const setPatientInfoRaw = u =>
+    updateActiveTab(t => ({ ...t, patientInfo: resolve(u, t.patientInfo), updatedAt: new Date().toISOString() }));
+  const setHistory = u => updateActiveTab(t => ({ ...t, history: resolve(u, t.history || []) }));
+  const setRedoStack = u => updateActiveTab(t => ({ ...t, redo: resolve(u, t.redo || []) }));
+  const setSelected = u => updateActiveTab(t => ({ ...t, selected: resolve(u, t.selected || null) }));
   // The sign-off is per-user, not per-install — editable in the editor and kept
   // in this browser rather than hard-coded in the source.
   const [signature, setSignature] = useLocalStorage('radiology.signature', DEFAULT_SIGNATURE);
@@ -96,6 +193,21 @@ export default function App() {
   const skipNextAutoPushRef = useRef(false);
   const autoPushTimerRef = useRef(null);
 
+  // Open tabs ride along in the same gist. The payload leaves out undo history,
+  // and its JSON is the push trigger — so moving through undo, or switching
+  // tabs, doesn't cause a push, only real report changes do.
+  const openTabsJson = useMemo(() => JSON.stringify(openTabsPayload(tabs, closedTabs)), [tabs, closedTabs]);
+  const tabsRef = useRef(tabs);
+  const closedTabsRef = useRef(closedTabs);
+  tabsRef.current = tabs;
+  closedTabsRef.current = closedTabs;
+  const applyRemoteTabs = remote => {
+    if (!remote) return;
+    const merged = mergeOpenTabs(tabsRef.current, closedTabsRef.current, remote);
+    setTabs(merged.tabs);
+    setClosedTabs(merged.closedTabs);
+  };
+
   useEffect(() => {
     if (!autoSync || !gistToken || !gistId) return;
     let cancelled = false;
@@ -104,6 +216,7 @@ export default function App() {
       .then(data => {
         if (cancelled) return;
         applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
+        applyRemoteTabs(data.openTabs);
         setLastSyncedAt(new Date().toISOString());
         setSyncStatus(null);
       })
@@ -126,7 +239,14 @@ export default function App() {
     if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
     autoPushTimerRef.current = setTimeout(() => {
       setSyncStatus('syncing');
-      saveToGist({ token: gistToken, gistId, userTemplates, userPhrases, addedWords })
+      saveToGist({
+        token: gistToken,
+        gistId,
+        userTemplates,
+        userPhrases,
+        addedWords,
+        openTabs: JSON.parse(openTabsJson),
+      })
         .then(id => {
           if (id !== gistId) setGistId(id);
           setLastSyncedAt(new Date().toISOString());
@@ -136,7 +256,7 @@ export default function App() {
     }, 3000);
     return () => clearTimeout(autoPushTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSync, userTemplates, userPhrases, addedWords]);
+  }, [autoSync, userTemplates, userPhrases, addedWords, openTabsJson]);
 
   // Periodic pull so a change saved from another device eventually appears
   // here too, not just changes made locally.
@@ -147,6 +267,7 @@ export default function App() {
       loadFromGist({ token: gistToken, gistId })
         .then(data => {
           applyImportedData(data, setUserTemplates, setUserPhrases, setAddedWords);
+          applyRemoteTabs(data.openTabs);
           setLastSyncedAt(new Date().toISOString());
           setSyncStatus(null);
         })
@@ -219,7 +340,11 @@ export default function App() {
       const key = e.key.toLowerCase();
       // Ctrl+Shift+Z and Ctrl+Y are both redo — Windows apps are split between
       // the two conventions, so accept either.
-      if ((key === 'z' && e.shiftKey) || key === 'y') {
+      // Ctrl+Shift+T reopens the last closed report, like a browser tab.
+      if (key === 't' && e.shiftKey) {
+        e.preventDefault();
+        handleReopenTabRef.current();
+      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
         e.preventDefault();
         handleRedoRef.current();
       } else if (key === 'z') {
@@ -244,24 +369,72 @@ export default function App() {
 
   // "Saved" timestamp for the editor's autosave hint. Skipped on the first
   // render — restoring a draft isn't a save the user just made.
+  // Switching tabs isn't a save either, so the hint resets instead.
   const [savedAt, setSavedAt] = useState(null);
-  const firstRenderRef = useRef(true);
+  const savedForTabRef = useRef(null);
   useEffect(() => {
-    if (firstRenderRef.current) {
-      firstRenderRef.current = false;
+    if (savedForTabRef.current !== activeTab.id) {
+      savedForTabRef.current = activeTab.id;
+      setSavedAt(null);
       return;
     }
     setSavedAt(Date.now());
-  }, [fields, patientInfo]);
+  }, [fields, patientInfo, activeTab.id]);
 
-  // Starts a blank report. Goes through setFields/setPatientInfo so it lands on
-  // the undo stack — clearing by accident is recoverable with Ctrl+Z.
-  const handleNewReport = () => {
-    if (!window.confirm('Clear the current report and start a new one? (Undo can bring it back.)')) return;
-    setFields(EMPTY_FIELDS);
-    setPatientInfo({ name: '', studyType: '' });
-    setSelected(null);
+  // Tabs. Switching resets the undo debounce so the first edit in the newly
+  // shown report gets its own checkpoint, and opens the left menu on the
+  // template that report was started from.
+  const switchToTab = tab => {
+    lastCheckpointRef.current = 0;
+    setActiveTabId(tab.id);
+    if (tab.selected) setOpenScope({ modality: tab.selected.modality, region: tab.selected.region });
   };
+  const handleSwitchTab = id => {
+    const tab = tabs.find(t => t.id === id);
+    if (tab && id !== activeTab.id) switchToTab(tab);
+  };
+
+  // New report = new tab; whatever was open stays open in its own tab.
+  const handleNewReport = () => {
+    const tab = makeTab();
+    setTabs(ts => [...ts, tab]);
+    switchToTab(tab);
+  };
+
+  // Closing never asks — it's always one click away from coming back via
+  // "Recently closed" or Ctrl+Shift+T. Blank tabs aren't worth remembering.
+  const handleCloseTab = id => {
+    const index = tabs.findIndex(t => t.id === id);
+    if (index === -1) return;
+    const tab = tabs[index];
+    const rest = tabs.filter(t => t.id !== id);
+    if (tabHasContent(tab)) {
+      setClosedTabs(cs => [{ ...tab, closedAt: new Date().toISOString() }, ...cs.filter(c => c.id !== id)].slice(0, MAX_CLOSED));
+      showToast(`Closed "${tabLabel(tab)}" — Ctrl+Shift+T to reopen`);
+    }
+    if (!rest.length) {
+      const blank = makeTab();
+      setTabs([blank]);
+      switchToTab(blank);
+      return;
+    }
+    setTabs(rest);
+    if (id === activeTab.id) switchToTab(rest[Math.min(index, rest.length - 1)]);
+  };
+
+  // Brings a closed tab back (the most recent one if none is given). It gets a
+  // fresh updatedAt so sync treats it as open again everywhere, not as closed.
+  const handleReopenTab = id => {
+    const entry = closedTabs.find(c => (id ? c.id === id : c.fields));
+    if (!entry?.fields) return;
+    const { closedAt, ...tab } = entry;
+    const reopened = { history: [], redo: [], ...tab, updatedAt: new Date().toISOString() };
+    setClosedTabs(cs => cs.filter(c => c.id !== entry.id));
+    setTabs(ts => [...ts.filter(t => t.id !== entry.id), reopened]);
+    switchToTab(reopened);
+  };
+  const handleReopenTabRef = useRef(handleReopenTab);
+  handleReopenTabRef.current = handleReopenTab;
   // Which modality/region is expanded in the left menu — the phrase list is
   // scoped to match it.
   const [openScope, setOpenScope] = useState(null);
@@ -553,6 +726,17 @@ export default function App() {
         </div>
       </header>
 
+      <ReportTabs
+        tabs={tabs}
+        activeTabId={activeTab.id}
+        closedTabs={closedTabs}
+        onSwitch={handleSwitchTab}
+        onClose={handleCloseTab}
+        onNew={handleNewReport}
+        onReopen={handleReopenTab}
+        onClearClosed={() => setClosedTabs(cs => cs.map(({ id, closedAt }) => ({ id, closedAt })))}
+      />
+
       {/* grid-rows-[minmax(0,1fr)] forces the single row to the container's
           actual height instead of auto-sizing to content — required so each
           panel's own h-full/overflow-y-auto can scroll independently now that
@@ -649,6 +833,10 @@ export default function App() {
           setUserTemplates={setUserTemplates}
           setUserPhrases={setUserPhrases}
           setAddedWords={setAddedWords}
+          tabs={tabs}
+          closedTabs={closedTabs}
+          setTabs={setTabs}
+          setClosedTabs={setClosedTabs}
         />
       )}
 

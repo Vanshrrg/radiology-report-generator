@@ -37,3 +37,8 @@ export function modalityLabel(key) {
 export function regionLabel(key) {
   return REGION_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
+
+// What a report tab is called: the patient, else the exam, else a placeholder.
+export function tabLabel(tab) {
+  return tab.patientInfo?.name?.trim() || tab.patientInfo?.studyType?.trim() || 'Untitled report';
+}

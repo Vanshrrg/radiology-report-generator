@@ -505,7 +505,7 @@ const ReportEditor = forwardRef(function ReportEditor(
           <button
             className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-sm font-medium px-3 py-2 rounded"
             onClick={onNewReport}
-            title="Clear the report and start a new one (undoable)"
+            title="Start a new report in a new tab — this one stays open"
           >
             New
           </button>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { saveToGist, loadFromGist, findOwnGist } from '../utils/gistSync.js';
+import { saveToGist, loadFromGist, findOwnGist, mergeOpenTabs, openTabsPayload } from '../utils/gistSync.js';
 import { mergeTemplates, mergePhrases } from '../utils/reportUtils.js';
 
 // Lets the user push/pull their saved templates & phrases to a private
@@ -21,6 +21,10 @@ export default function SyncModal({
   setUserTemplates,
   setUserPhrases,
   setAddedWords,
+  tabs,
+  closedTabs,
+  setTabs,
+  setClosedTabs,
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
@@ -43,6 +47,7 @@ export default function SyncModal({
       let mergedTemplates = userTemplates;
       let mergedPhrases = userPhrases;
       let mergedWords = addedWords;
+      let mergedTabs = { tabs, closedTabs };
       let pulledTemplateCount = 0;
       let pulledPhraseCount = 0;
       if (currentGistId) {
@@ -58,6 +63,11 @@ export default function SyncModal({
         setUserTemplates(mergedTemplates);
         setUserPhrases(mergedPhrases);
         setAddedWords(mergedWords);
+        if (data.openTabs) {
+          mergedTabs = mergeOpenTabs(tabs, closedTabs, data.openTabs);
+          setTabs(mergedTabs.tabs);
+          setClosedTabs(mergedTabs.closedTabs);
+        }
       }
       const id = await saveToGist({
         token,
@@ -65,6 +75,7 @@ export default function SyncModal({
         userTemplates: mergedTemplates,
         userPhrases: mergedPhrases,
         addedWords: mergedWords,
+        openTabs: openTabsPayload(mergedTabs.tabs, mergedTabs.closedTabs),
       });
       setGistId(id);
       // Once a sync has succeeded there's a token and gist to keep syncing
@@ -74,8 +85,8 @@ export default function SyncModal({
       setMessage({
         type: 'ok',
         text: currentGistId
-          ? `Synced — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s). Auto-sync is now on.`
-          : `First sync on this account — saved your templates & phrases. Auto-sync is now on.`,
+          ? `Synced — merged in ${pulledTemplateCount} template(s) and ${pulledPhraseCount} phrase(s); ${mergedTabs.tabs.length} open report(s). Auto-sync is now on.`
+          : `First sync on this account — saved your templates, phrases & open reports. Auto-sync is now on.`,
       });
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -96,7 +107,7 @@ export default function SyncModal({
         </div>
 
         <p className="text-xs text-slate-500 mb-3">
-          Syncs your templates & phrases with a private GitHub Gist — merging in whatever's
+          Syncs your templates, phrases & open report tabs with a private GitHub Gist — merging in whatever's
           already there, then saving the combined set back. Enter the same token on another
           device to sync it too — it finds your existing gist automatically. Needs a{' '}
           <a

@@ -36,7 +36,13 @@ async function githubRequest(url, token, options = {}) {
 
 async function throwGithubError(res) {
   if (res.status === 401) throw new Error('GitHub rejected that token — check it has the "gist" scope and hasn\'t expired.');
-  if (res.status === 404) throw new Error("Gist not found — check the Gist ID, or leave it blank to create a new one.");
+  if (res.status === 404) {
+    // Usually a gist id left over from an earlier token/account. Flagged so
+    // callers can forget it and find (or create) this token's own gist.
+    const err = new Error('That gist is gone, or belongs to a different account than this token.');
+    err.gistNotFound = true;
+    throw err;
+  }
   const body = await res.json().catch(() => null);
   throw new Error(body?.message || `GitHub request failed (${res.status}).`);
 }
@@ -75,12 +81,41 @@ export async function saveToGist({ token, gistId, userTemplates, userPhrases, ad
     public: false,
     files,
   };
+  // A gist id saved under an earlier token can point at a gist this token
+  // can't see (another account, or one that's been deleted). Rather than
+  // failing every push from then on, fall back to this token's own sync gist,
+  // creating one if it has none — that's what makes pasting a new token work.
   if (gistId) {
-    await githubRequest(`https://api.github.com/gists/${gistId}`, token, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    });
-    return gistId;
+    try {
+      await githubRequest(`https://api.github.com/gists/${gistId}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      return gistId;
+    } catch (err) {
+      if (!err.gistNotFound) throw err;
+      const own = await findOwnGist(token);
+      if (own) {
+        await githubRequest(`https://api.github.com/gists/${own}`, token, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        });
+        return own;
+      }
+    }
+  }
+  // No id in hand (first run here, or one just discarded as stale): adopt this
+  // token's existing sync gist if it has one, so a second device — or a fresh
+  // token — joins the existing gist instead of starting a rival copy.
+  if (!gistId) {
+    const own = await findOwnGist(token);
+    if (own) {
+      await githubRequest(`https://api.github.com/gists/${own}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      return own;
+    }
   }
   const created = await githubRequest('https://api.github.com/gists', token, {
     method: 'POST',

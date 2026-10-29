@@ -7,7 +7,7 @@ import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { templates as premadeTemplates, phrases as premadePhrases } from './data/premadeData.js';
 import { exportUserData, importUserData, applyImportedData, DEFAULT_SIGNATURE } from './utils/reportUtils.js';
 import ReportTabs from './components/ReportTabs.jsx';
-import { saveToGist, loadFromGist, mergeOpenTabs, openTabsPayload, MAX_CLOSED } from './utils/gistSync.js';
+import { saveToGist, loadFromGist, findOwnGist, mergeOpenTabs, openTabsPayload, MAX_CLOSED } from './utils/gistSync.js';
 import { modalityLabel, regionLabel, tabLabel } from './utils/labels.js';
 import { collectUserWords } from './utils/spellcheck.js';
 
@@ -244,13 +244,42 @@ export default function App() {
         applyRemoteTabs(data.openTabs);
         setLastSyncedAt(new Date().toISOString());
       })
-      .catch(() => setSyncStatus('error'))
+      .catch(err => {
+        // Stale gist id (typically from a token swapped for one on another
+        // account): forget it, which sends the push below — and the next
+        // pull — looking for this token's own gist instead of failing forever.
+        if (err?.gistNotFound) {
+          etagRef.current = null;
+          setGistId('');
+          return;
+        }
+        setSyncStatus('error');
+      })
       .finally(() => {
         pullingRef.current = false;
       });
   };
   const pullFromGistRef = useRef(pullFromGist);
   pullFromGistRef.current = pullFromGist;
+
+  // Token but no gist id — a new token pasted in, or an id just discarded as
+  // stale. Find this token's own sync gist so pulls can start again without
+  // waiting for the next local edit to push.
+  useEffect(() => {
+    // The token box saves as it's typed, so wait until it's at least token-
+    // length before asking GitHub about it.
+    if (!autoSync || gistToken.trim().length < 20 || gistId) return;
+    let cancelled = false;
+    findOwnGist(gistToken)
+      .then(id => {
+        if (!cancelled && id) setGistId(id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, gistToken, gistId]);
 
   useEffect(() => {
     if (!autoSync || !gistToken || !gistId) return;

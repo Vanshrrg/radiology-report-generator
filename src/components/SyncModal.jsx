@@ -50,8 +50,20 @@ export default function SyncModal({
       let mergedTabs = { tabs, closedTabs };
       let pulledTemplateCount = 0;
       let pulledPhraseCount = 0;
+      let data = null;
       if (currentGistId) {
-        const data = await loadFromGist({ token, gistId: currentGistId });
+        try {
+          data = await loadFromGist({ token, gistId: currentGistId });
+        } catch (err) {
+          // The saved id belongs to an older token's account (or its gist is
+          // gone). Look the right one up under this token instead of stopping.
+          if (!err?.gistNotFound) throw err;
+          currentGistId = await findOwnGist(token);
+          setGistId(currentGistId || '');
+          data = currentGistId ? await loadFromGist({ token, gistId: currentGistId }) : null;
+        }
+      }
+      if (data) {
         if (data.templates) mergedTemplates = mergeTemplates(userTemplates, data.templates);
         if (data.phrases) mergedPhrases = mergePhrases(userPhrases, data.phrases);
         if (data.words?.length) mergedWords = Array.from(new Set([...(addedWords || []), ...data.words]));
